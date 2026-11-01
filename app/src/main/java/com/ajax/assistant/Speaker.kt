@@ -1,29 +1,57 @@
 package com.ajax.assistant
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import java.util.Locale
 
-/** On-device text-to-speech for short confirmations. */
+/** On-device text-to-speech. Respects the "Speak replies" preference. Main thread only. */
 class Speaker(ctx: Context) : TextToSpeech.OnInitListener {
-    var enabled = true
+    private val appCtx = ctx.applicationContext
+    private val main = Handler(Looper.getMainLooper())
+    private val callbacks = HashMap<String, () -> Unit>()
     private var ready = false
-    private var pending: String? = null
-    private val tts = TextToSpeech(ctx.applicationContext, this)
+    private var failed = false
+    private var counter = 0
+    private var pending: Pair<String, (() -> Unit)?>? = null
+    private val tts = TextToSpeech(appCtx, this)
+
+    private val enabled: Boolean
+        get() = appCtx.getSharedPreferences(Prefs.NAME, Context.MODE_PRIVATE).getBoolean(Prefs.SPEAK, true)
 
     override fun onInit(status: Int) {
         ready = status == TextToSpeech.SUCCESS
+        failed = !ready
         if (ready) {
             tts.language = Locale.US
-            pending?.let { speak(it) }
+            tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(utteranceId: String?) {}
+                override fun onDone(utteranceId: String?) = fire(utteranceId)
+
+                @Deprecated("Required override")
+                override fun onError(utteranceId: String?) = fire(utteranceId)
+            })
         }
+        pending?.let { (t, cb) -> speak(t, cb) }
         pending = null
     }
 
-    fun speak(text: String) {
-        if (!enabled) return
-        if (!ready) { pending = text; return }
-        tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "ajax")
+    /** Speaks [text]; [onDone] runs afterwards (immediately if speech is off). */
+    fun speak(text: String, onDone: (() -> Unit)? = null) {
+        if (text.isBlank() || !enabled || failed) {
+            onDone?.let { main.post(it) }
+            return
+        }
+        if (!ready) { pending = text to onDone; return }
+        val id = "u${counter++}"
+        onDone?.let { callbacks[id] = it }
+        tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, id)
+    }
+
+    private fun fire(id: String?) {
+        main.post { callbacks.remove(id)?.invoke() }
     }
 
     fun shutdown() {

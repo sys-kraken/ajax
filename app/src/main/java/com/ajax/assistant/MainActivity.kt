@@ -2,50 +2,95 @@ package com.ajax.assistant
 
 import android.Manifest
 import android.app.Activity
+import android.app.NotificationManager
+import android.app.role.RoleManager
+import android.content.ActivityNotFoundException
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.view.MotionEvent
+import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
 
 class MainActivity : Activity(), SpeechInput.Callback {
 
-    private class Step(val label: String, val permissions: Array<String>)
-
-    private val steps = listOf(
-        Step("Microphone (required for voice)", arrayOf(Manifest.permission.RECORD_AUDIO)),
-        Step(
-            "Contacts and phone (needed for \"call ...\")",
-            arrayOf(Manifest.permission.READ_CONTACTS, Manifest.permission.CALL_PHONE),
-        ),
+    private class Step(
+        val label: String,
+        val hint: String,
+        val granted: () -> Boolean,
+        val runtime: Array<String>? = null,
+        val intent: (() -> Intent)? = null,
     )
+
+    private val steps: List<Step> by lazy {
+        fun has(p: String) = checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
+        val restricted = "If Android says “Restricted setting”: Settings > Apps > Ajax > ⋮ menu > Allow restricted settings, then try again."
+        listOf(
+            Step("Microphone", "Needed to hear you.", { has(Manifest.permission.RECORD_AUDIO) },
+                runtime = arrayOf(Manifest.permission.RECORD_AUDIO)),
+            Step("Side key (default assistant)",
+                "Pick Ajax under Digital assistant app > Device assistance app. Then holding the side key opens Ajax.",
+                { isDefaultAssistant() },
+                intent = { Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS) }),
+            Step("Contacts and calling", "Needed for “call …” and “text …”.",
+                { has(Manifest.permission.READ_CONTACTS) && has(Manifest.permission.CALL_PHONE) },
+                runtime = arrayOf(Manifest.permission.READ_CONTACTS, Manifest.permission.CALL_PHONE)),
+            Step("Texting", "Needed for “text …”. Ajax always asks before sending. $restricted",
+                { has(Manifest.permission.SEND_SMS) },
+                runtime = arrayOf(Manifest.permission.SEND_SMS)),
+            Step("Accessibility", "Needed for Back, Home, scroll, screenshot, lock, and Wi-Fi/Bluetooth/data/airplane switches. Find Ajax in the list and turn it on. $restricted",
+                { AjaxAccessibilityService.instance != null },
+                intent = { Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS) }),
+            Step("Change brightness", "Needed for “brightness 50 percent”.",
+                { Settings.System.canWrite(this) },
+                intent = { Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:$packageName")) }),
+            Step("Do Not Disturb access", "Needed for Do Not Disturb and silent mode.",
+                { getSystemService(NotificationManager::class.java).isNotificationPolicyAccessGranted },
+                intent = { Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS) }),
+            Step("Notification access", "Needed for “read my notifications”. $restricted",
+                {
+                    Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
+                        ?.contains(packageName) == true
+                },
+                intent = { Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS) }),
+        )
+    }
 
     private lateinit var speech: SpeechInput
     private lateinit var speaker: Speaker
+    private lateinit var brain: Brain
     private lateinit var status: TextView
+    private lateinit var hint: TextView
     private lateinit var grant: Button
     private lateinit var talk: Button
     private lateinit var heard: TextView
     private lateinit var result: TextView
+    private val main = Handler(Looper.getMainLooper())
     private var openSettingsMode = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         speech = SpeechInput(this, this)
         speaker = Speaker(this)
+        brain = Brain(this)
+        val prefs = getSharedPreferences(Prefs.NAME, MODE_PRIVATE)
 
         val pad = (16 * resources.displayMetrics.density).toInt()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad, pad, pad)
-            fitsSystemWindows = true
         }
         fun text(size: Float) = TextView(this).apply {
             textSize = size
@@ -53,25 +98,25 @@ class MainActivity : Activity(), SpeechInput.Callback {
         }
 
         root.addView(text(28f).apply { this.text = "Ajax" })
-        status = text(16f).also { root.addView(it) }
+        status = text(15f).also { root.addView(it) }
+        hint = text(13f).also { root.addView(it) }
         grant = Button(this).apply { setOnClickListener { onGrantClicked() } }
         root.addView(grant)
         root.addView(Switch(this).apply {
             text = "Speak replies"
-            isChecked = true
-            setOnCheckedChangeListener { _, on -> speaker.enabled = on }
+            isChecked = prefs.getBoolean(Prefs.SPEAK, true)
+            setOnCheckedChangeListener { _, on -> prefs.edit().putBoolean(Prefs.SPEAK, on).apply() }
         })
-
         root.addView(Switch(this).apply {
             text = "Allow online speech recognition (audio may go to Google)"
-            isChecked = false
-            setOnCheckedChangeListener { _, on -> speech.allowOnline = on }
+            isChecked = prefs.getBoolean(Prefs.ONLINE, false)
+            setOnCheckedChangeListener { _, on -> prefs.edit().putBoolean(Prefs.ONLINE, on).apply() }
         })
         root.addView(Button(this).apply {
             text = "Open voice settings"
             setOnClickListener {
                 try { startActivity(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS)) }
-                catch (e: android.content.ActivityNotFoundException) { show(Result(false, "This phone has no voice settings page.")) }
+                catch (e: ActivityNotFoundException) { show(Result(false, "This phone has no voice settings page.")) }
             }
         })
 
@@ -92,16 +137,22 @@ class MainActivity : Activity(), SpeechInput.Callback {
         result = text(18f).also { root.addView(it) }
         root.addView(
             text(13f).apply {
-                text = "Try: open YouTube, open Wi-Fi settings, flashlight on, volume up, mute, call <contact name>"
+                text = "Try: open YouTube • open Wi-Fi settings • turn on Bluetooth • flashlight on • volume up • " +
+                    "vibrate mode • brightness 50 percent • do not disturb on • call <name> • " +
+                    "text <name> saying <message> • set an alarm for 7 30 am • timer 5 minutes • go back • " +
+                    "scroll down • take a screenshot • what's my battery • read my notifications"
             },
             LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT),
         )
-        setContentView(root)
+        setContentView(ScrollView(this).apply {
+            addView(root)
+            fitsSystemWindows = true
+        })
     }
 
     override fun onResume() {
         super.onResume()
-        refreshPermissions()
+        refreshSteps()
     }
 
     override fun onDestroy() {
@@ -110,17 +161,22 @@ class MainActivity : Activity(), SpeechInput.Callback {
         super.onDestroy()
     }
 
-    private fun granted(p: String) = checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
+    private fun isDefaultAssistant(): Boolean {
+        if (Build.VERSION.SDK_INT >= 29 &&
+            getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_ASSISTANT) == true
+        ) return true
+        return Settings.Secure.getString(contentResolver, "assistant")?.startsWith("$packageName/") == true
+    }
 
-    private fun refreshPermissions() {
-        status.text = steps.joinToString("\n") { s ->
-            (if (s.permissions.all(::granted)) "✓ " else "✗ ") + s.label
-        }
-        val next = steps.firstOrNull { s -> !s.permissions.all(::granted) }
-        grant.visibility = if (next == null) android.view.View.GONE else android.view.View.VISIBLE
+    private fun refreshSteps() {
+        status.text = steps.joinToString("\n") { (if (it.granted()) "✓ " else "✗ ") + it.label }
+        val next = steps.firstOrNull { !it.granted() }
+        grant.visibility = if (next == null) View.GONE else View.VISIBLE
+        hint.visibility = if (next == null) View.GONE else View.VISIBLE
         if (next == null) openSettingsMode = false
-        grant.text = if (openSettingsMode) "Open app settings (permission was blocked)" else "Allow: ${next?.label}"
-        talk.isEnabled = granted(Manifest.permission.RECORD_AUDIO)
+        hint.text = next?.hint.orEmpty()
+        grant.text = if (openSettingsMode) "Open app settings (permission was blocked)" else "Set up: ${next?.label}"
+        talk.isEnabled = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
     }
 
     private fun onGrantClicked() {
@@ -130,8 +186,13 @@ class MainActivity : Activity(), SpeechInput.Callback {
             )
             return
         }
-        val next = steps.firstOrNull { s -> !s.permissions.all(::granted) } ?: return
-        requestPermissions(next.permissions.filter { !granted(it) }.toTypedArray(), 1)
+        val next = steps.firstOrNull { !it.granted() } ?: return
+        next.runtime?.let { requestPermissions(it, 1); return }
+        try {
+            startActivity(next.intent!!())
+        } catch (e: ActivityNotFoundException) {
+            show(Result(false, "This phone has no settings page for that. Open it from Settings by hand."))
+        }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -139,11 +200,11 @@ class MainActivity : Activity(), SpeechInput.Callback {
         val denied = permissions.filterIndexed { i, _ -> grantResults[i] != PackageManager.PERMISSION_GRANTED }
         // Denied and Android will not show the dialog again: only app settings can fix it.
         openSettingsMode = denied.isNotEmpty() && denied.none { shouldShowRequestPermissionRationale(it) }
-        refreshPermissions()
+        refreshSteps()
     }
 
     private fun startListening() {
-        if (!granted(Manifest.permission.RECORD_AUDIO)) return
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
         heard.text = ""
         result.text = ""
         speech.start()
@@ -158,15 +219,20 @@ class MainActivity : Activity(), SpeechInput.Callback {
     }
 
     override fun onResults(candidates: List<String>) {
-        // Try the recogniser's alternatives in order until one is a known command.
-        val hit = candidates.firstNotNullOfOrNull { c -> CommandRouter.route(c)?.let { c to it } }
-        if (hit == null) {
-            heard.text = "“${candidates.first()}”"
-            show(Result(false, "I don't know that command yet."))
-            return
+        val reply = brain.handle(candidates)
+        heard.text = "“${brain.heard}”"
+        val after = reply.afterHide
+        when {
+            after != null -> {
+                result.text = reply.result.message
+                main.postDelayed({ AjaxAccessibilityService.announce(after()) }, 450)
+            }
+            reply.listenAgain -> {
+                result.text = reply.result.message
+                speaker.speak(reply.result.message) { speech.start() }
+            }
+            else -> show(reply.result)
         }
-        heard.text = "“${hit.first}”"
-        show(hit.second.run(this))
     }
 
     override fun onError(message: String) {

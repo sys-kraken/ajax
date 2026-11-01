@@ -26,7 +26,8 @@ class SpeechInput(private val ctx: Context, private val cb: Callback) {
     private var retriedDisconnect = false
 
     /** Off by default: audio stays on the phone. When on, the system recogniser may use the network. */
-    var allowOnline = false
+    private val allowOnline: Boolean
+        get() = ctx.getSharedPreferences(Prefs.NAME, Context.MODE_PRIVATE).getBoolean(Prefs.ONLINE, false)
 
     private fun intent() = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
