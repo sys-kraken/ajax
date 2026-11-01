@@ -23,6 +23,7 @@ class SpeechInput(private val ctx: Context, private val cb: Callback) {
     private var forceStandard = false
     private var retriedStandard = false
     private var retriedOnline = false
+    private var retriedDisconnect = false
 
     /** Off by default: audio stays on the phone. When on, the system recogniser may use the network. */
     var allowOnline = false
@@ -37,18 +38,21 @@ class SpeechInput(private val ctx: Context, private val cb: Callback) {
 
     fun start() {
         retriedOnline = false
-        begin()
+        retriedDisconnect = false
+        begin(fresh = false)
     }
 
-    private fun begin() {
-        release()
+    /** [fresh] discards the current recogniser; otherwise it is reused (avoids service disconnects). */
+    private fun begin(fresh: Boolean) {
+        if (fresh) release()
         if (!SpeechRecognizer.isRecognitionAvailable(ctx)) {
             cb.onError("This phone has no speech recognition service.")
             return
         }
-        val r = create()
-        r.setRecognitionListener(listener)
-        rec = r
+        val r = rec ?: create().also {
+            it.setRecognitionListener(listener)
+            rec = it
+        }
         r.startListening(intent())
         cb.onListening(if (onDevice) "on-device" else "system recogniser (may use the network)")
     }
@@ -95,14 +99,21 @@ class SpeechInput(private val ctx: Context, private val cb: Callback) {
             if ((error == 12 || error == 13) && onDevice && !retriedStandard) {
                 retriedStandard = true
                 forceStandard = true
-                begin()
+                begin(fresh = true)
                 return
             }
             if ((error == 12 || error == 13) && !onDevice && allowOnline && !retriedOnline) {
                 retriedOnline = true
-                begin() // now without PREFER_OFFLINE
+                begin(fresh = true) // now without PREFER_OFFLINE
                 return
             }
+            // 11: recogniser service disconnected. Rebuild it and retry once.
+            if (error == 11 && !retriedDisconnect) {
+                retriedDisconnect = true
+                begin(fresh = true)
+                return
+            }
+            if (error == 11) release()
             cb.onError(
                 when (error) {
                     SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT, SpeechRecognizer.ERROR_CLIENT ->
@@ -112,6 +123,7 @@ class SpeechInput(private val ctx: Context, private val cb: Callback) {
                     SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT, SpeechRecognizer.ERROR_SERVER ->
                         "Speech recognition needs the network, or an offline English pack."
                     SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Speech recogniser is busy. Try again."
+                    11 -> "Speech service disconnected. Press again."
                     12, 13 -> "English isn't available offline. Google app > profile > Settings > Voice > Offline speech recognition > English (US). Or turn on online recognition below."
                     else -> "Speech recognition failed (code $error)."
                 },
