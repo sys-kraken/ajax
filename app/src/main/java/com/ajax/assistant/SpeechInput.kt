@@ -22,16 +22,25 @@ class SpeechInput(private val ctx: Context, private val cb: Callback) {
     private var onDevice = false
     private var forceStandard = false
     private var retriedStandard = false
+    private var retriedOnline = false
 
-    private val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+    /** Off by default: audio stays on the phone. When on, the system recogniser may use the network. */
+    var allowOnline = false
+
+    private fun intent() = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
         putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
-        putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+        putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, !(allowOnline && !onDevice))
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
     }
 
     fun start() {
+        retriedOnline = false
+        begin()
+    }
+
+    private fun begin() {
         release()
         if (!SpeechRecognizer.isRecognitionAvailable(ctx)) {
             cb.onError("This phone has no speech recognition service.")
@@ -40,7 +49,7 @@ class SpeechInput(private val ctx: Context, private val cb: Callback) {
         val r = create()
         r.setRecognitionListener(listener)
         rec = r
-        r.startListening(intent)
+        r.startListening(intent())
         cb.onListening(if (onDevice) "on-device" else "system recogniser (may use the network)")
     }
 
@@ -86,7 +95,12 @@ class SpeechInput(private val ctx: Context, private val cb: Callback) {
             if ((error == 12 || error == 13) && onDevice && !retriedStandard) {
                 retriedStandard = true
                 forceStandard = true
-                start()
+                begin()
+                return
+            }
+            if ((error == 12 || error == 13) && !onDevice && allowOnline && !retriedOnline) {
+                retriedOnline = true
+                begin() // now without PREFER_OFFLINE
                 return
             }
             cb.onError(
@@ -98,7 +112,7 @@ class SpeechInput(private val ctx: Context, private val cb: Callback) {
                     SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT, SpeechRecognizer.ERROR_SERVER ->
                         "Speech recognition needs the network, or an offline English pack."
                     SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Speech recogniser is busy. Try again."
-                    12, 13 -> "English speech isn't available offline. Download it in the phone's voice settings."
+                    12, 13 -> "English isn't available offline. Google app > profile > Settings > Voice > Offline speech recognition > English (US). Or turn on online recognition below."
                     else -> "Speech recognition failed (code $error)."
                 },
             )

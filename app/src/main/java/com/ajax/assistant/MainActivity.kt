@@ -62,6 +62,19 @@ class MainActivity : Activity(), SpeechInput.Callback {
             setOnCheckedChangeListener { _, on -> speaker.enabled = on }
         })
 
+        root.addView(Switch(this).apply {
+            text = "Allow online speech recognition (audio may go to Google)"
+            isChecked = false
+            setOnCheckedChangeListener { _, on -> speech.allowOnline = on }
+        })
+        root.addView(Button(this).apply {
+            text = "Open voice settings"
+            setOnClickListener {
+                try { startActivity(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS)) }
+                catch (e: android.content.ActivityNotFoundException) { show(Result(false, "This phone has no voice settings page.")) }
+            }
+        })
+
         talk = Button(this).apply {
             text = "Hold to talk"
             textSize = 20f
