@@ -89,6 +89,7 @@ class MainActivity : Activity(), SpeechInput.Callback {
         speech = SpeechInput(this, this)
         speaker = Speaker(this)
         brain = Brain(this)
+        Actions.watchTorch(this)
         val prefs = getSharedPreferences(Prefs.NAME, MODE_PRIVATE)
 
         val pad = (16 * resources.displayMetrics.density).toInt()

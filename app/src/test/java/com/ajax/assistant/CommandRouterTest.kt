@@ -25,7 +25,9 @@ class CommandRouterTest {
         assertEquals("torch-on", id("could you flip the torch on"))
         assertEquals("torch-on", id("turn on the flashlight"))
         assertEquals("torch-off", id("turn off the torch"))
-        assertEquals("torch-unclear", id("flashlight"))
+        assertEquals("torch-toggle", id("flashlight"))
+        assertEquals("torch-toggle", id("toggle the torch"))
+        assertEquals("torch-unclear", id("is the flashlight bright"))
     }
 
     @Test fun volume() {

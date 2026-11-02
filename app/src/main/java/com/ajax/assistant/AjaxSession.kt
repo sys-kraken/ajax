@@ -21,6 +21,8 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
     private val brain = Brain(ctx)
     private val speech = SpeechInput(ctx, this)
     private val speaker = Speaker(ctx)
+
+    init { Actions.watchTorch(ctx) }
     private lateinit var heardView: TextView
     private lateinit var resultView: TextView
 

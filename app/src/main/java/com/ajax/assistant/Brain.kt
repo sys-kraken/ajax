@@ -48,23 +48,27 @@ class Brain(private val ctx: Context) {
             return
         }
 
-        // 1. Exact phrasing: the regex router, instant.
-        candidates.firstNotNullOfOrNull { c -> CommandRouter.route(c)?.let { c to it } }?.let { (c, m) ->
+        // 1. Exact phrasing: the regex router, instant. A "sure" match wins outright.
+        val hits = candidates.mapNotNull { c -> CommandRouter.route(c)?.let { c to it } }
+        hits.firstOrNull { it.second.sure(ctx) }?.let { (c, m) ->
             heard = c
             done(run(m, fromModel = false))
             return
         }
+        // Only a hint matched (e.g. "flashlight?", unknown app): keep it as the fallback answer.
+        val fallback: () -> Reply = hits.firstOrNull()?.let { (c, m) -> { heard = c; run(m, fromModel = false) } }
+            ?: { Reply(Result(false, "I don't know that command yet.")) }
 
         // 2. Loose phrasing: the on-device model picks one command from the same table.
-        val unknown = Reply(Result(false, "I don't know that command yet."))
-        if (!IntentModel.available(ctx)) { done(unknown); return }
+        if (!IntentModel.available(ctx)) { done(fallback()); return }
         onThinking()
         val gen = generation
-        IntentModel.interpret(ctx, heard) { phrase ->
+        val said = heard
+        IntentModel.interpret(ctx, said) { phrase ->
             if (gen != generation) return@interpret
-            val m = phrase?.let { CommandRouter.route(it) }
-            if (phrase == null || m == null) { done(unknown); return@interpret }
-            heard = "$heard → $phrase"
+            val m = phrase?.let { CommandRouter.route(it) }?.takeIf { it.sure(ctx) }
+            if (phrase == null || m == null) { done(fallback()); return@interpret }
+            heard = "$said → $phrase"
             done(run(m, fromModel = true))
         }
     }

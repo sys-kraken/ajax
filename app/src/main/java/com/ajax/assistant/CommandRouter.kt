@@ -9,7 +9,11 @@ import android.provider.Settings
 /** Turns recognised text into one action. Keyword/regex matching only. */
 object CommandRouter {
 
-    class Match(val id: String, val start: (Context) -> Outcome)
+    /**
+     * [sure] = false means this match can only give a hint or error (e.g. "say on or off", app not
+     * installed). The Brain then lets the on-device model try first, keeping this as the fallback.
+     */
+    class Match(val id: String, val sure: (Context) -> Boolean = { true }, val start: (Context) -> Outcome)
 
     private val needsAccessibility =
         Result(false, "This needs Accessibility. Open Ajax and turn it on.")
@@ -55,6 +59,9 @@ object CommandRouter {
 
     private fun done(id: String, f: (Context) -> Result) = Match(id) { Outcome.Done(f(it)) }
 
+    /** A hint-only answer: shown only if the model can't do better. */
+    private fun hint(id: String, message: String) = Match(id, sure = { false }) { Outcome.Done(Result(false, message)) }
+
     // ---- Sound -------------------------------------------------------------------------------
 
     private fun volume(t: String): Match? = when {
@@ -90,7 +97,9 @@ object CommandRouter {
         return when {
             on && !off -> done("torch-on") { Actions.torch(it, true) }
             off && !on -> done("torch-off") { Actions.torch(it, false) }
-            else -> done("torch-unclear") { Result(false, "Say flashlight on, or flashlight off.") }
+            Regex("^(?:toggle |switch )?(?:the )?(?:flashlight|flash light|torch)$").matches(t) ->
+                done("torch-toggle") { Actions.torchToggle(it) }
+            else -> hint("torch-unclear", "Say flashlight on, or flashlight off.")
         }
     }
 
@@ -159,7 +168,7 @@ object CommandRouter {
         Regex("$prefix(\\d{1,3})(?: percent)?$").matchEntire(t)?.let { m ->
             val p = m.groupValues[1].toInt()
             if (p in 1..100) return done("brightness") { Actions.brightness(it, p) }
-            return done("brightness-invalid") { Result(false, "Say a brightness from 1 to 100 percent.") }
+            return hint("brightness-invalid", "Say a brightness from 1 to 100 percent.")
         }
         if (Regex("$prefix(?:max|maximum|full)$").matches(t)) return done("brightness") { Actions.brightness(it, 100) }
         if (Regex("$prefix(?:min|minimum|lowest)$").matches(t)) return done("brightness") { Actions.brightness(it, 1) }
@@ -260,7 +269,7 @@ object CommandRouter {
         val m = Regex("^(?:call|dial|phone|ring) (.+)$").matchEntire(t) ?: return null
         val who = m.groupValues[1].trim()
         if (Regex("^[0-9 ]+$").matches(who)) {
-            return done("call-number") { Result(false, "Calling phone numbers isn't supported yet. Say a contact name.") }
+            return hint("call-number", "Calling phone numbers isn't supported yet. Say a contact name.")
         }
         return done("call") { Actions.call(it, who) }
     }
@@ -272,7 +281,7 @@ object CommandRouter {
             ?: Regex("^(?:open |show )?(.+) app info$").matchEntire(t)
             ?: return null
         val name = m.groupValues[1].trim()
-        return done("app-info") { Actions.appInfo(it, name) }
+        return Match("app-info", sure = { Actions.hasApp(it, name) }) { Outcome.Done(Actions.appInfo(it, name)) }
     }
 
     private fun settings(t: String): Match? {
@@ -289,6 +298,7 @@ object CommandRouter {
     private fun openApp(t: String): Match? {
         val m = Regex("^(?:open|launch|start|run) (?:the )?(.+?)(?: app)?$").matchEntire(t) ?: return null
         val name = m.groupValues[1].trim()
-        return done("open-app") { Actions.openApp(it, name) }
+        // "start a timer for five minutes" also matches here: only sure if such an app exists.
+        return Match("open-app", sure = { Actions.hasApp(it, name) }) { Outcome.Done(Actions.openApp(it, name)) }
     }
 }

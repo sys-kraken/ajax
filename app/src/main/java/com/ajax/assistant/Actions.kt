@@ -62,6 +62,8 @@ object Actions {
 
     private fun key(s: String) = s.lowercase().replace(Regex("[^a-z0-9]"), "")
 
+    fun hasApp(ctx: Context, name: String): Boolean = findApp(ctx, name) != null
+
     fun openApp(ctx: Context, name: String): Result {
         val app = findApp(ctx, name) ?: return Result(false, "I couldn't find an app called $name.")
         val intent = ctx.packageManager.getLaunchIntentForPackage(app.pkg)
@@ -77,14 +79,40 @@ object Actions {
 
     // ---- Hardware ----------------------------------------------------------------------------
 
+    /** Real torch state, kept current by a system callback (null until Android reports it). */
+    @Volatile private var torchState: Boolean? = null
+    @Volatile private var torchWatched = false
+
+    private fun torchId(cm: CameraManager): String? = cm.cameraIdList.firstOrNull {
+        val c = cm.getCameraCharacteristics(it)
+        c.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true &&
+            c.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
+    }
+
+    /** Starts tracking the torch. Call early (screen/overlay creation); safe to call repeatedly. */
+    fun watchTorch(ctx: Context) {
+        if (torchWatched) return
+        torchWatched = true
+        val cm = ctx.applicationContext.getSystemService(CameraManager::class.java) ?: return
+        val id = try { torchId(cm) } catch (e: Exception) { null } ?: return
+        cm.registerTorchCallback(object : CameraManager.TorchCallback() {
+            override fun onTorchModeChanged(cameraId: String, enabled: Boolean) {
+                if (cameraId == id) torchState = enabled
+            }
+        }, android.os.Handler(android.os.Looper.getMainLooper()))
+    }
+
+    /** "Flashlight" on its own: flip it. */
+    fun torchToggle(ctx: Context): Result {
+        watchTorch(ctx)
+        val now = torchState ?: return Result(false, "Say flashlight on, or flashlight off.")
+        return torch(ctx, !now)
+    }
+
     fun torch(ctx: Context, on: Boolean): Result {
         val cm = ctx.getSystemService(CameraManager::class.java)
         return try {
-            val id = cm.cameraIdList.firstOrNull {
-                val c = cm.getCameraCharacteristics(it)
-                c.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true &&
-                    c.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
-            } ?: return Result(false, "This phone reports no flashlight.")
+            val id = torchId(cm) ?: return Result(false, "This phone reports no flashlight.")
             cm.setTorchMode(id, on)
             Result(true, if (on) "Flashlight on" else "Flashlight off")
         } catch (e: CameraAccessException) {
