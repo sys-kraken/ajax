@@ -21,7 +21,7 @@ object ModelManager {
         "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_0.gguf"
     const val SIZE_BYTES = 428_730_208L
     /** Checked in CI by .github/workflows/model-hash.yml against the real file. */
-    const val SHA256 = "PENDING"
+    const val SHA256 = "7671c0c304e6ce5a7fc577bcb12aba01e2c155cc2efd29b2213c95b18edaf6ed"
 
     private const val IDLE_MS = 60_000L
 
