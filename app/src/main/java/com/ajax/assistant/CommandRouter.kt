@@ -30,6 +30,9 @@ object CommandRouter {
         add(Settings.ACTION_NFC_SETTINGS, "nfc")
     }
 
+    /** Settings pages Ajax can open by name (used by the model's command table). */
+    val settingsPageNames: Set<String> get() = pages.keys
+
     fun normalize(raw: String): String {
         var s = raw.lowercase().trim()
         s = s.replace(Regex("['’]"), "")

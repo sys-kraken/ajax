@@ -79,6 +79,8 @@ class MainActivity : Activity(), SpeechInput.Callback {
     private lateinit var talk: Button
     private lateinit var heard: TextView
     private lateinit var result: TextView
+    private lateinit var modelStatus: TextView
+    private lateinit var modelButton: Button
     private val main = Handler(Looper.getMainLooper())
     private var openSettingsMode = false
 
@@ -121,6 +123,11 @@ class MainActivity : Activity(), SpeechInput.Callback {
                 catch (e: ActivityNotFoundException) { show(Result(false, "This phone has no voice settings page.")) }
             }
         })
+
+        root.addView(text(17f).apply { text = "Smart understanding (optional)" })
+        modelStatus = text(13f).also { root.addView(it) }
+        modelButton = Button(this).apply { setOnClickListener { onModelClicked() } }
+        root.addView(modelButton)
 
         talk = Button(this).apply {
             text = "Hold to talk"
@@ -166,10 +173,51 @@ class MainActivity : Activity(), SpeechInput.Callback {
 
     override fun onResume() {
         super.onResume()
+        ModelManager.listener = ::showModel
+        showModel(ModelManager.state(this))
         refreshSteps()
     }
 
+    private fun onModelClicked() {
+        when (ModelManager.state(this)) {
+            is ModelManager.State.Ready -> ModelManager.delete(this)
+            is ModelManager.State.Downloading -> {}
+            else -> ModelManager.download(this)
+        }
+    }
+
+    private fun showModel(s: ModelManager.State) {
+        val mb = { b: Long -> b / 1_000_000 }
+        if (!LlamaNative.available) {
+            modelStatus.text = "Not supported on this phone (needs a 64-bit ARM processor)."
+            modelButton.visibility = View.GONE
+            return
+        }
+        modelButton.isEnabled = s !is ModelManager.State.Downloading
+        when (s) {
+            is ModelManager.State.Ready -> {
+                modelStatus.text = "On. Ajax understands loose phrasing like “could you flip the torch on”. " +
+                    "Runs fully on the phone."
+                modelButton.text = "Delete model (free ${mb(ModelManager.SIZE_BYTES)} MB)"
+            }
+            is ModelManager.State.Downloading -> {
+                modelStatus.text = "Downloading… ${mb(s.done)} of ${mb(s.total)} MB. You can leave this screen."
+                modelButton.text = "Downloading…"
+            }
+            is ModelManager.State.Failed -> {
+                modelStatus.text = s.message
+                modelButton.text = "Retry download"
+            }
+            is ModelManager.State.Missing -> {
+                modelStatus.text = "Downloads a ${mb(ModelManager.SIZE_BYTES)} MB language model once (use Wi-Fi). " +
+                    "After that it runs offline; your words never leave the phone."
+                modelButton.text = "Download model"
+            }
+        }
+    }
+
     override fun onPause() {
+        ModelManager.listener = null
         // Leaving the screen (e.g. a command opened Settings) must not turn into an error.
         speech.cancel()
         super.onPause()
@@ -241,7 +289,12 @@ class MainActivity : Activity(), SpeechInput.Callback {
     }
 
     override fun onResults(candidates: List<String>) {
-        val reply = brain.handle(candidates)
+        heard.text = "“${candidates.first()}”"
+        brain.handle(candidates, onThinking = { result.text = "Thinking…" }) { act(it) }
+    }
+
+    private fun act(reply: Brain.Reply) {
+        if (isFinishing || isDestroyed) return
         heard.text = "“${brain.heard}”"
         val after = reply.afterHide
         when {

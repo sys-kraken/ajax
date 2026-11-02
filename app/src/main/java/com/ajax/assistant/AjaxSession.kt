@@ -92,7 +92,13 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
 
     override fun onResults(candidates: List<String>) {
         if (!active) return
-        val reply = brain.handle(candidates)
+        heardView.text = "“${candidates.first()}”"
+        brain.handle(candidates, onThinking = { if (active) resultView.text = "Thinking…" }) { reply ->
+            if (active) act(reply)
+        }
+    }
+
+    private fun act(reply: Brain.Reply) {
         heardView.text = "“${brain.heard}”"
         val after = reply.afterHide
         when {
