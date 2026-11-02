@@ -88,12 +88,23 @@ object ModelManager {
     private fun fetchAndVerify(ctx: Context) {
         val part = part(ctx)
         if (part.length() > SIZE_BYTES) part.delete()
+        val resumed = part.length() in 1 until SIZE_BYTES
         if (part.length() < SIZE_BYTES) fetch(part)
         if (part.length() != SIZE_BYTES) throw IllegalStateException("Download incomplete. Tap again to resume.")
-        val actual = sha256(part)
+        var actual = sha256(part)
+        if (!actual.equals(SHA256, ignoreCase = true) && resumed) {
+            // A resumed download is the only way a correctly sized file can differ: start clean once.
+            part.delete()
+            fetch(part)
+            if (part.length() != SIZE_BYTES) throw IllegalStateException("Download incomplete. Tap again to resume.")
+            actual = sha256(part)
+        }
         if (!actual.equals(SHA256, ignoreCase = true)) {
             part.delete()
-            throw IllegalStateException("Downloaded file failed the integrity check and was deleted.")
+            throw IllegalStateException(
+                "Downloaded file failed the integrity check and was deleted " +
+                    "(expected ${SHA256.take(8)}, got ${actual.take(8)}).",
+            )
         }
         if (!part.renameTo(file(ctx))) throw IllegalStateException("Couldn't save the model file.")
         stamp(ctx).writeText(SHA256)
@@ -106,12 +117,20 @@ object ModelManager {
             instanceFollowRedirects = true
             connectTimeout = 15_000
             readTimeout = 30_000
+            setRequestProperty("Accept-Encoding", "identity") // raw bytes only, never re-encoded
             if (start > 0) setRequestProperty("Range", "bytes=$start-")
         }
         try {
             val code = conn.responseCode
             val append = when (code) {
-                HttpURLConnection.HTTP_PARTIAL -> true
+                // Only append if the server resumed exactly where our file ends.
+                HttpURLConnection.HTTP_PARTIAL -> {
+                    if (conn.getHeaderField("Content-Range")?.startsWith("bytes $start-") != true) {
+                        part.delete()
+                        throw IllegalStateException("Server resumed at the wrong place. Tap again to restart.")
+                    }
+                    true
+                }
                 HttpURLConnection.HTTP_OK -> false // server ignored Range: start over
                 else -> throw IllegalStateException("Download failed (HTTP $code).")
             }

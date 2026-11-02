@@ -102,6 +102,9 @@ class MainActivity : Activity(), SpeechInput.Callback {
         }
 
         root.addView(text(28f).apply { this.text = "Ajax" })
+        root.addView(text(12f).apply {
+            this.text = "Version " + packageManager.getPackageInfo(packageName, 0).versionName
+        })
         status = text(15f).also { root.addView(it) }
         hint = text(13f).also { root.addView(it) }
         grant = Button(this).apply { setOnClickListener { onGrantClicked() } }
