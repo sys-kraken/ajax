@@ -111,7 +111,7 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
                 Handler(Looper.getMainLooper()).postDelayed({ AjaxAccessibilityService.announce(after()) }, 450)
             }
             reply.listenAgain -> {
-                resultView.text = (if (reply.result.ok) "" else "✗ ") + reply.result.message
+                resultView.text = reply.result.message
                 speaker.speak(reply.result.message) { if (active) speech.start() }
             }
             else -> finishWith(reply.result)
@@ -123,7 +123,7 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
     }
 
     private fun finishWith(r: Result) {
-        resultView.text = (if (r.ok) "✓ " else "✗ ") + r.message
+        resultView.text = r.message
         speaker.speak(r.message) { if (active) main.postDelayed({ close() }, 900) }
     }
 

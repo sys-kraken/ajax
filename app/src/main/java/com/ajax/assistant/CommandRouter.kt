@@ -178,12 +178,13 @@ object CommandRouter {
         val state: ((Context) -> Boolean?)? = null,
     )
 
+    private const val INTERNET_PANEL = "android.settings.panel.action.INTERNET_CONNECTIVITY"
+
     private fun toggleFor(name: String): Toggle? = when (name) {
         "wifi" -> Toggle(Settings.ACTION_WIFI_SETTINGS, listOf("Wi-Fi", "Wifi", "WLAN"), true, "Wi-Fi", SwitchState::wifi)
         "bluetooth" -> Toggle(Settings.ACTION_BLUETOOTH_SETTINGS, listOf("Bluetooth"), true, "Bluetooth", SwitchState::bluetooth)
         "mobile data", "cellular data", "data" -> Toggle(
-            if (Build.VERSION.SDK_INT >= 29) "android.settings.panel.action.INTERNET_CONNECTIVITY"
-            else Settings.ACTION_DATA_ROAMING_SETTINGS,
+            INTERNET_PANEL,
             listOf("Mobile data"), false, "Mobile data",
         )
         "airplane mode", "airplane", "flight mode" -> Toggle(
@@ -223,7 +224,13 @@ object CommandRouter {
             } else {
                 Outcome.AfterHide("Turning ${tg.pretty} ${m.second}") { ctx ->
                     val opened = try {
-                        ctx.startActivity(Intent(tg.action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        // The internet panel exists from Android 10; older phones get the mobile network page.
+                        val action = if (tg.action == INTERNET_PANEL && Build.VERSION.SDK_INT < 29) {
+                            Settings.ACTION_DATA_ROAMING_SETTINGS
+                        } else {
+                            tg.action
+                        }
+                        ctx.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                         true
                     } catch (e: android.content.ActivityNotFoundException) {
                         false

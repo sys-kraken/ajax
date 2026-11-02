@@ -36,7 +36,7 @@ class MainActivity : Activity(), SpeechInput.Callback {
 
     private val steps: List<Step> by lazy {
         fun has(p: String) = checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
-        val restricted = "If Android says “Restricted setting”: Settings > Apps > Ajax > ⋮ menu > Allow restricted settings, then try again."
+        val restricted = "If Android says “Restricted setting”: Settings > Apps > Ajax > three-dot menu > Allow restricted settings, then try again."
         listOf(
             Step("Microphone", "Needed to hear you.", { has(Manifest.permission.RECORD_AUDIO) },
                 runtime = arrayOf(Manifest.permission.RECORD_AUDIO)),
@@ -244,7 +244,7 @@ class MainActivity : Activity(), SpeechInput.Callback {
 
     private fun refreshSteps() {
         val engine = Recognizers.delegate(this)?.packageName ?: "none found — install the Google app"
-        status.text = steps.joinToString("\n") { (if (it.granted()) "✓ " else "✗ ") + it.label } +
+        status.text = steps.joinToString("\n") { it.label + if (it.granted()) ": ready" else ": needs setup" } +
             "\nSpeech engine: $engine"
         val next = steps.firstOrNull { !it.granted() }
         grant.visibility = if (next == null) View.GONE else View.VISIBLE
@@ -321,7 +321,7 @@ class MainActivity : Activity(), SpeechInput.Callback {
     }
 
     private fun show(r: Result) {
-        result.text = (if (r.ok) "✓ " else "✗ ") + r.message
+        result.text = r.message
         speaker.speak(r.message)
     }
 }

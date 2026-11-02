@@ -68,15 +68,15 @@ class Brain(private val ctx: Context) {
             if (gen != generation) return@interpret
             val m = phrase?.let { CommandRouter.route(it) }?.takeIf { it.sure(ctx) }
             if (phrase == null || m == null) { done(fallback()); return@interpret }
-            heard = "$said → $phrase"
-            done(run(m, fromModel = true))
+            heard = "$said (understood as: $phrase)"
+            done(run(m, fromModel = true, phrase = phrase))
         }
     }
 
-    private fun run(m: CommandRouter.Match, fromModel: Boolean): Reply {
+    private fun run(m: CommandRouter.Match, fromModel: Boolean, phrase: String = ""): Reply {
         // A guessed phone call is too costly to get wrong: confirm it first.
         if (fromModel && m.id == "call") {
-            val ask = Outcome.Ask("${heard.substringAfter("→ ").replaceFirstChar { it.uppercase() }}?") { c ->
+            val ask = Outcome.Ask("${phrase.replaceFirstChar { it.uppercase() }}?") { c ->
                 (m.start(c) as? Outcome.Done)?.result ?: Result(false, "Couldn't place the call.")
             }
             pending = ask
