@@ -137,24 +137,44 @@ class AjaxAccessibilityService : AccessibilityService() {
         }, 500)
     }
 
+    /**
+     * The switch for [labels], or null. Strict on purpose — tapping the wrong switch (e.g. Wi-Fi for
+     * Bluetooth on a list page) is worse than doing nothing:
+     *  - a label must match a node's whole text/description, not a substring;
+     *  - climbing from the label, accept a switch only if it is the ONLY one in that container;
+     *    a container with several switches is a list, so stop there;
+     *  - [fallback] takes the screen's switch only if the screen has exactly one.
+     */
     private fun findSwitch(root: AccessibilityNodeInfo, labels: List<String>, fallback: Boolean): AccessibilityNodeInfo? {
+        val wanted = labels.flatMap { listOf(it, "Use $it") }.map { it.lowercase() }.toSet()
         for (label in labels) {
             for (node in root.findAccessibilityNodeInfosByText(label)) {
+                if (!isLabel(node, wanted)) continue
                 var p: AccessibilityNodeInfo? = node
-                repeat(3) {
-                    p?.let { n -> firstCheckable(n)?.let { return it } }
-                    p = p?.parent
+                for (level in 0..4) {
+                    val n = p ?: break
+                    val inside = checkables(n, 2)
+                    if (inside.size == 1) return inside[0]
+                    if (inside.size > 1) break
+                    p = n.parent
                 }
             }
         }
-        return if (fallback) firstCheckable(root) else null
+        if (!fallback) return null
+        return checkables(root, 2).singleOrNull()
     }
 
-    private fun firstCheckable(n: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        if (n.isCheckable) return n
+    private fun isLabel(n: AccessibilityNodeInfo, wanted: Set<String>): Boolean =
+        listOfNotNull(n.text, n.contentDescription).any { it.toString().trim().lowercase() in wanted }
+
+    /** Checkable nodes under [n], stopping once [limit] are found (we only need 0, 1 or "many"). */
+    private fun checkables(n: AccessibilityNodeInfo, limit: Int, out: MutableList<AccessibilityNodeInfo> = ArrayList()): List<AccessibilityNodeInfo> {
+        if (out.size >= limit) return out
+        if (n.isCheckable) out.add(n)
         for (i in 0 until n.childCount) {
-            n.getChild(i)?.let { c -> firstCheckable(c)?.let { return it } }
+            if (out.size >= limit) break
+            n.getChild(i)?.let { checkables(it, limit, out) }
         }
-        return null
+        return out
     }
 }

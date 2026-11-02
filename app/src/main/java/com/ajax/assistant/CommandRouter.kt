@@ -101,7 +101,7 @@ object CommandRouter {
     )
 
     private fun toggleFor(name: String): Toggle? = when (name) {
-        "wifi" -> Toggle(Settings.ACTION_WIFI_SETTINGS, listOf("Wi-Fi", "Wifi"), true, "Wi-Fi", SwitchState::wifi)
+        "wifi" -> Toggle(Settings.ACTION_WIFI_SETTINGS, listOf("Wi-Fi", "Wifi", "WLAN"), true, "Wi-Fi", SwitchState::wifi)
         "bluetooth" -> Toggle(Settings.ACTION_BLUETOOTH_SETTINGS, listOf("Bluetooth"), true, "Bluetooth", SwitchState::bluetooth)
         "mobile data", "cellular data", "data" -> Toggle(
             if (Build.VERSION.SDK_INT >= 29) "android.settings.panel.action.INTERNET_CONNECTIVITY"
