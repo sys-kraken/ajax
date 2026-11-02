@@ -14,6 +14,9 @@ object LlamaNative {
     external fun load(path: String, threads: Int): Long
     external fun free(handle: Long)
 
-    /** Greedy completion restricted to [grammar] (GBNF, root rule "root"). Null on failure. */
-    external fun complete(handle: Long, prompt: String, grammar: String, maxTokens: Int): String?
+    /**
+     * Greedy completion of [prefix]+[suffix] restricted to [grammar] (GBNF, root "root"). The prefix
+     * is cached between calls, so keep it identical. Null on failure.
+     */
+    external fun complete(handle: Long, prefix: String, suffix: String, grammar: String, maxTokens: Int): String?
 }

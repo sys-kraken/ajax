@@ -17,11 +17,12 @@ class IntentModelTest {
         listOf(
             "brightness 40 percent", "set an alarm for 7 30 am", "set an alarm for 6", "timer 10 minutes",
             "open spotify", "app info for spotify", "call mom", "text mom saying on my way",
+            "volume 30 percent", "search for pizza near me", "navigate to the airport", "tap ok", "type hello",
         ).forEach { assertNotNull("router rejects '$it'", CommandRouter.route(it)) }
     }
 
     @Test fun grammarListsEveryFixedCommand() {
-        val g = c.grammar()
+        val g = c.grammar
         for (p in c.fixed) assertTrue(p, g.contains("\"$p\""))
         assertTrue(g.startsWith("root ::= "))
     }
@@ -44,8 +45,15 @@ class IntentModelTest {
         assertNull(c.accept("text bob saying hi", "message alice hi"))
     }
 
-    @Test fun promptEndsWithAssistantTurn() {
-        val p = c.prompt("flip the torch on")
-        assertTrue(p.endsWith("<|im_start|>user\nflip the torch on<|im_end|>\n<|im_start|>assistant\n"))
+    @Test fun promptSplitsIntoCachedPrefixAndRequest() {
+        assertTrue(c.prefix.endsWith("<|im_start|>user\n"))
+        assertTrue(c.suffix("flip the torch on") == "flip the torch on<|im_end|>\n<|im_start|>assistant\n")
+    }
+
+    @Test fun rejectsInventedSlotText() {
+        assertNull(c.accept("navigate to the airport", "how do i get to the station"))
+        assertNull(c.accept("tap cancel", "press the ok button"))
+        assertNull(c.accept("type hello there", "type hi"))
+        assertEquals("search for weather in london", c.accept("search for weather in london", "look up the weather in london"))
     }
 }

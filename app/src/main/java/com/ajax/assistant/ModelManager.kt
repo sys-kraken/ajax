@@ -177,7 +177,7 @@ object ModelManager {
      * Runs a grammar-constrained completion on the model thread; [done] gets the text (or null) on
      * the main thread. Loads the model if needed and schedules unloading after [IDLE_MS].
      */
-    fun complete(ctx: Context, prompt: String, grammar: String, maxTokens: Int, done: (String?) -> Unit) {
+    fun complete(ctx: Context, prefix: String, suffix: String, grammar: String, maxTokens: Int, done: (String?) -> Unit) {
         val app = ctx.applicationContext
         worker.post {
             worker.removeCallbacks(unload)
@@ -186,7 +186,7 @@ object ModelManager {
                     val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
                     handle = LlamaNative.load(file(app).absolutePath, threads)
                 }
-                if (handle == 0L) null else LlamaNative.complete(handle, prompt, grammar, maxTokens)
+                if (handle == 0L) null else LlamaNative.complete(handle, prefix, suffix, grammar, maxTokens)
             } catch (e: Throwable) {
                 null
             }

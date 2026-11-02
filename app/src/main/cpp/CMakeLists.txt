@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # llama.cpp, pinned. Built static and linked into one small JNI library.
 set(BUILD_SHARED_LIBS    OFF CACHE BOOL "" FORCE)
-set(GGML_NATIVE          OFF CACHE BOOL "" FORCE) # cross-compiling: never tune for the CI machine
+set(GGML_NATIVE          OFF CACHE BOOL "" FORCE) # portable build: never tune for the build machine
 set(GGML_OPENMP          OFF CACHE BOOL "" FORCE) # ggml's own threadpool; no libomp to ship
 set(GGML_BACKEND_DL      OFF CACHE BOOL "" FORCE)
 set(LLAMA_OPENSSL        OFF CACHE BOOL "" FORCE)
@@ -26,5 +26,14 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(llama)
 
-add_library(ajax_llm SHARED llm_jni.cpp)
-target_link_libraries(ajax_llm PRIVATE llama log)
+add_library(ajax_llm_core STATIC llm_core.cpp)
+target_link_libraries(ajax_llm_core PUBLIC llama)
+
+if (ANDROID)
+    add_library(ajax_llm SHARED llm_jni.cpp)
+    target_link_libraries(ajax_llm PRIVATE ajax_llm_core log)
+else()
+    # Host build (CI): the model check runs the same llm_core the phone runs.
+    add_executable(ajax_eval eval_main.cpp)
+    target_link_libraries(ajax_eval PRIVATE ajax_llm_core)
+endif()

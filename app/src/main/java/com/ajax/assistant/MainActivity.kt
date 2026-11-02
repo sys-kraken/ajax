@@ -150,10 +150,12 @@ class MainActivity : Activity(), SpeechInput.Callback {
         result = text(18f).also { root.addView(it) }
         root.addView(
             text(13f).apply {
-                text = "Try: open YouTube • open Wi-Fi settings • turn on Bluetooth • flashlight on • volume up • " +
-                    "vibrate mode • brightness 50 percent • do not disturb on • call <name> • " +
-                    "text <name> saying <message> • set an alarm for 7 30 am • timer 5 minutes • go back • " +
-                    "scroll down • take a screenshot • what's my battery • read my notifications"
+                text = "Try: open YouTube • turn on Bluetooth • flashlight • volume 40 percent • play music • next song • " +
+                    "brightness 50 percent • do not disturb on • auto rotate off • turn off location • " +
+                    "call <name> • text <name> saying <message> • set an alarm for 7 30 am • timer 5 minutes • " +
+                    "take a photo • search for <anything> • navigate to <place> • tap <button> • type <text> • " +
+                    "go back • scroll down • take a screenshot • what's my battery • how much storage do I have • " +
+                    "read my notifications. With smart understanding on, just say it your way."
             },
             LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT),
         )

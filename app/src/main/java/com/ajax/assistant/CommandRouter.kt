@@ -47,14 +47,17 @@ object CommandRouter {
         s = s.replace(Regex("screen shot"), "screenshot")
         s = s.replace(Regex("^(hey |ok |okay )?(ajax )?(please )?(can you |could you )?(please )?"), "").trim()
         s = s.removeSuffix(" please").trim()
+        // Trailing filler never changes a command: "what is the time right now", "wifi off now".
+        s = s.replace(Regex("\\s+(?:right now|now|for me|please)$"), "").trim()
         return s
     }
 
     fun route(raw: String): Match? {
         val t = normalize(raw)
         if (t.isEmpty()) return null
-        return volume(t) ?: ringer(t) ?: torch(t) ?: toggle(t) ?: brightness(t) ?: dnd(t) ?: nav(t)
-            ?: info(t) ?: alarm(t) ?: timer(t) ?: sms(raw) ?: appInfo(t) ?: settings(t) ?: call(t) ?: openApp(t)
+        return volume(t) ?: media(t) ?: ringer(t) ?: torch(t) ?: rotate(t) ?: toggle(t) ?: brightness(t) ?: dnd(t)
+            ?: nav(t) ?: sms(raw) ?: screen(t) ?: info(t) ?: alarm(t) ?: timer(t) ?: camera(t) ?: search(t)
+            ?: navigate(t) ?: appInfo(t) ?: settings(t) ?: call(t) ?: openApp(t)
     }
 
     private fun done(id: String, f: (Context) -> Result) = Match(id) { Outcome.Done(f(it)) }
@@ -73,7 +76,70 @@ object CommandRouter {
             done("mute") { Actions.volume(it, AudioManager.ADJUST_MUTE, "Muted") }
         Regex("^(unmute|unmute (the )?(sound|volume|phone))$").matches(t) ->
             done("unmute") { Actions.volume(it, AudioManager.ADJUST_UNMUTE, "Unmuted") }
+        Regex("^(?:volume (?:max|maximum|full)|max(?:imum)? volume|full volume)$").matches(t) ->
+            done("volume-level") { Actions.volumeLevel(it, 100) }
+        else -> Regex("^(?:set (?:the )?)?volume (?:to |at )?(\\d{1,3})(?: percent)?$").matchEntire(t)?.let { m ->
+            val p = m.groupValues[1].toInt()
+            if (p in 0..100) done("volume-level") { Actions.volumeLevel(it, p) }
+            else hint("volume-invalid", "Say a volume from 0 to 100 percent.")
+        }
+    }
+
+    private fun media(t: String): Match? {
+        val key = when {
+            Regex("^(?:play|resume|play (?:the )?music|resume (?:the )?music|continue (?:the )?music)$").matches(t) ->
+                android.view.KeyEvent.KEYCODE_MEDIA_PLAY to "Playing"
+            Regex("^(?:pause|pause (?:the )?music|stop (?:the )?music)$").matches(t) ->
+                android.view.KeyEvent.KEYCODE_MEDIA_PAUSE to "Paused"
+            Regex("^(?:next|skip|next (?:song|track)|skip (?:this |the )?(?:song|track))$").matches(t) ->
+                android.view.KeyEvent.KEYCODE_MEDIA_NEXT to "Next track"
+            Regex("^(?:previous|previous (?:song|track)|last (?:song|track))$").matches(t) ->
+                android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS to "Previous track"
+            else -> return null
+        }
+        return done("media-${key.second.lowercase().replace(' ', '-')}") { Actions.media(it, key.first, key.second) }
+    }
+
+    private fun rotate(t: String): Match? = when {
+        Regex("^(?:turn on |enable )?auto ?rotat(?:e|ion)(?: on)?$|^unlock (?:the )?rotation$|^rotation lock off$").matches(t) ->
+            done("rotate-on") { Actions.autoRotate(it, true) }
+        Regex("^(?:turn off |disable )auto ?rotat(?:e|ion)$|^auto ?rotat(?:e|ion) off$|^lock (?:the )?rotation$|^rotation lock on$").matches(t) ->
+            done("rotate-off") { Actions.autoRotate(it, false) }
         else -> null
+    }
+
+    private fun camera(t: String): Match? = when {
+        Regex("^(?:take|snap) (?:a )?(?:photo|picture|pic|selfie)$|^open (?:the )?camera$|^camera$").matches(t) ->
+            done("camera-photo") { Actions.camera(it, false) }
+        Regex("^(?:record|take|shoot) (?:a )?video$").matches(t) ->
+            done("camera-video") { Actions.camera(it, true) }
+        else -> null
+    }
+
+    private fun search(t: String): Match? {
+        val m = Regex("^(?:search|google|look up|search the web) (?:for )?(.+)$").matchEntire(t) ?: return null
+        val q = m.groupValues[1].trim()
+        return done("search") { Actions.webSearch(it, q) }
+    }
+
+    private fun navigate(t: String): Match? {
+        val m = Regex("^(?:navigate|directions|get directions|drive|take me) to (.+)$").matchEntire(t) ?: return null
+        val place = m.groupValues[1].trim()
+        if (place.endsWith(" settings")) return null // "take me to wifi settings" is a settings page
+        return done("navigate") { Actions.navigate(it, place) }
+    }
+
+    /** Acts on whatever app is on screen: tap a button by its label, or type into the focused field. */
+    private fun screen(t: String): Match? {
+        Regex("^(?:tap|click|press|hit|select)(?: on)? (?:the )?(.+?)(?: button)?$").matchEntire(t)?.let { m ->
+            val label = m.groupValues[1].trim()
+            return nav("tap", "Tapping $label") { it.tap(label) }
+        }
+        Regex("^type (.+)$").matchEntire(t)?.let { m ->
+            val text = m.groupValues[1].trim()
+            return nav("type", "Typing") { it.type(text) }
+        }
+        return null
     }
 
     private fun ringer(t: String): Match? = when {
@@ -123,10 +189,19 @@ object CommandRouter {
         "airplane mode", "airplane", "flight mode" -> Toggle(
             Settings.ACTION_AIRPLANE_MODE_SETTINGS, listOf("Airplane mode", "Flight mode"), true, "Airplane mode", SwitchState::airplane,
         )
+        "location", "gps" -> Toggle(
+            Settings.ACTION_LOCATION_SOURCE_SETTINGS, listOf("Use location", "Location"), true, "Location", SwitchState::location,
+        )
+        "battery saver", "power saving", "power saving mode" -> Toggle(
+            Settings.ACTION_BATTERY_SAVER_SETTINGS, listOf("Use Battery Saver", "Battery Saver", "Power saving"), true,
+            "Battery saver", SwitchState::batterySaver,
+        )
+        "nfc" -> Toggle(Settings.ACTION_NFC_SETTINGS, listOf("NFC", "Use NFC", "NFC and contactless payments"), true, "NFC", SwitchState::nfc)
         else -> null
     }
 
-    private const val TOGGLE_NAMES = "wifi|bluetooth|mobile data|cellular data|data|airplane mode|airplane|flight mode"
+    private const val TOGGLE_NAMES = "wifi|bluetooth|mobile data|cellular data|data|airplane mode|airplane|flight mode|" +
+        "location|gps|battery saver|power saving mode|power saving|nfc"
 
     /** Switches Android won't let apps flip: open the page, then tap the switch with Accessibility. */
     private fun toggle(t: String): Match? {
@@ -193,7 +268,7 @@ object CommandRouter {
     }
 
     private fun nav(t: String): Match? = when {
-        Regex("^(?:go )?back$").matches(t) ->
+        Regex("^(?:go |press )?back$").matches(t) ->
             nav("nav-back", "Going back") { it.global(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK, "Back") }
         Regex("^(?:go )?home$|^go to (?:the )?home(?: screen)?$|^home screen$").matches(t) ->
             nav("nav-home", "Going home") { it.global(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME, "Home") }
@@ -225,6 +300,8 @@ object CommandRouter {
             done("info-date") { Actions.date() }
         Regex("^(?:read|check) (?:my )?notifications$").matches(t) ->
             done("info-notifications") { Actions.readNotifications(it) }
+        Regex("^(?:how much|whats my|what is my|check (?:my )?)(?: free)? storage(?: do i have| is left| left| space)?$|^storage (?:left|space)$|^how much space (?:do i have|is left)$").matches(t) ->
+            done("info-storage") { Actions.storage() }
         else -> null
     }
 
@@ -286,7 +363,7 @@ object CommandRouter {
 
     private fun settings(t: String): Match? {
         if (Regex("^(open |show )?settings$").matches(t)) return page("main", Settings.ACTION_SETTINGS)
-        val m = Regex("^(?:open |show |go to )?(?:the )?(.+) settings$").matchEntire(t) ?: return null
+        val m = Regex("^(?:open |show |go to |take me to )?(?:the )?(.+) settings$").matchEntire(t) ?: return null
         val name = m.groupValues[1]
         val action = pages[name] ?: return null
         return page(name, action)

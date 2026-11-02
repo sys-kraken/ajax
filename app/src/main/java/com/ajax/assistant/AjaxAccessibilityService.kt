@@ -73,6 +73,40 @@ class AjaxAccessibilityService : AccessibilityService() {
     }
 
     /**
+     * Taps the on-screen control labelled [label]. Strict: an exact label match wins; otherwise a
+     * single partial match; several candidates means we ask instead of guessing.
+     */
+    fun tap(label: String): Result {
+        val root = rootInActiveWindow?.takeIf { it.packageName?.toString() != packageName }
+            ?: return Result(false, "I can't see the screen right now.")
+        val want = label.lowercase()
+        val all = root.findAccessibilityNodeInfosByText(label).filter { it.isVisibleToUser }
+        fun text(n: AccessibilityNodeInfo) = listOfNotNull(n.text, n.contentDescription).joinToString(" ").trim().lowercase()
+        val exact = all.filter { text(it) == want }
+        val pick = exact.singleOrNull() ?: if (exact.isEmpty()) all.singleOrNull() else null
+        if (pick == null) {
+            return Result(false, if (all.isEmpty()) "I don't see “$label” on the screen." else "I see several “$label”. Say the full name.")
+        }
+        var target: AccessibilityNodeInfo? = pick
+        while (target != null && !target.isClickable) target = target.parent
+        return if (target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) Result(true, "Tapped $label")
+        else Result(false, "“$label” can't be tapped.")
+    }
+
+    /** Types [text] at the end of the focused text field. */
+    fun type(text: String): Result {
+        val field = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.takeIf { it.isEditable }
+            ?: return Result(false, "Tap a text box first, then ask me to type.")
+        val current = field.text?.toString().orEmpty().takeUnless { field.isShowingHintText }.orEmpty()
+        val joined = if (current.isEmpty() || current.endsWith(" ")) current + text else "$current $text"
+        val args = android.os.Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, joined)
+        }
+        return if (field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) Result(true, "Typed")
+        else Result(false, "That text box won't accept typing.")
+    }
+
+    /**
      * Finds the on/off switch for one of [labels] on the current screen and sets it. Polls for a few
      * seconds because the settings page needs time to appear. Reports the outcome itself.
      */

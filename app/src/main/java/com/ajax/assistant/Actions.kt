@@ -3,6 +3,7 @@ package com.ajax.assistant
 import android.Manifest
 import android.app.Notification
 import android.app.NotificationManager
+import android.app.SearchManager
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -15,6 +16,10 @@ import android.media.AudioManager
 import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
+import android.os.Environment
+import android.os.StatFs
+import android.provider.MediaStore
+import android.view.KeyEvent
 import android.provider.AlarmClock
 import android.provider.ContactsContract
 import android.provider.Settings
@@ -327,5 +332,62 @@ object Actions {
         val shown = lines.take(5)
         val more = if (lines.size > shown.size) " And ${lines.size - shown.size} more." else ""
         return Result(true, "${lines.size} notifications. " + shown.joinToString(". ") + "." + more)
+    }
+
+    // ---- Media ---------------------------------------------------------------------------------
+
+    /** Play/pause/next/previous in whatever app is playing (media key, like a headset button). */
+    fun media(ctx: Context, keyCode: Int, okMessage: String): Result {
+        val am = ctx.getSystemService(AudioManager::class.java)
+        am.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
+        am.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, keyCode))
+        return Result(true, okMessage)
+    }
+
+    fun volumeLevel(ctx: Context, percent: Int): Result = try {
+        val am = ctx.getSystemService(AudioManager::class.java)
+        val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        am.setStreamVolume(AudioManager.STREAM_MUSIC, (max * percent + 50) / 100, AudioManager.FLAG_SHOW_UI)
+        Result(true, "Volume $percent percent")
+    } catch (e: SecurityException) {
+        Result(false, "Android blocked the volume change.")
+    }
+
+    // ---- Web, maps, camera -----------------------------------------------------------------------
+
+    fun webSearch(ctx: Context, query: String): Result {
+        val search = Intent(Intent.ACTION_WEB_SEARCH).putExtra(SearchManager.QUERY, query)
+        val browser = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(query)))
+        return if (launch(ctx, search) || launch(ctx, browser)) Result(true, "Searching for $query")
+        else Result(false, "No app can search the web.")
+    }
+
+    fun navigate(ctx: Context, place: String): Result {
+        val q = Uri.encode(place)
+        val turnByTurn = Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=$q"))
+        val anyMap = Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=$q"))
+        return if (launch(ctx, turnByTurn) || launch(ctx, anyMap)) Result(true, "Directions to $place")
+        else Result(false, "No maps app is installed.")
+    }
+
+    fun camera(ctx: Context, video: Boolean): Result {
+        val i = Intent(if (video) MediaStore.INTENT_ACTION_VIDEO_CAMERA else MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
+        return if (launch(ctx, i)) Result(true, if (video) "Opening the video camera" else "Opening the camera")
+        else Result(false, "No camera app found.")
+    }
+
+    // ---- Device ----------------------------------------------------------------------------------
+
+    /** Auto-rotate is a system setting Ajax may write directly (with "Change brightness" access). */
+    fun autoRotate(ctx: Context, on: Boolean): Result {
+        if (!Settings.System.canWrite(ctx)) return Result(false, "Open Ajax and allow Change system settings first.")
+        Settings.System.putInt(ctx.contentResolver, Settings.System.ACCELEROMETER_ROTATION, if (on) 1 else 0)
+        return Result(true, if (on) "Auto-rotate on" else "Auto-rotate off")
+    }
+
+    fun storage(): Result {
+        val st = StatFs(Environment.getDataDirectory().path)
+        val gb = { b: Long -> String.format(Locale.US, "%.1f", b / 1e9) }
+        return Result(true, "${gb(st.availableBytes)} GB free of ${gb(st.totalBytes)} GB")
     }
 }

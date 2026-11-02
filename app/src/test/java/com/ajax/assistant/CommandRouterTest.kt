@@ -107,4 +107,49 @@ class CommandRouterTest {
         assertNull(id("what's the weather"))
         assertNull(id(""))
     }
+
+    @Test fun trailingFiller() {
+        assertEquals("info-time", id("What is the time right now?"))
+        assertEquals("info-time", id("what time is it now"))
+        assertEquals("info-battery", id("whats my battery now"))
+        assertEquals("toggle:Wi-Fi:off", id("turn off wifi now"))
+    }
+
+    @Test fun media() {
+        assertEquals("media-playing", id("play music"))
+        assertEquals("media-paused", id("pause"))
+        assertEquals("media-next-track", id("skip this song"))
+        assertEquals("media-previous-track", id("previous track"))
+        assertEquals("volume-level", id("set volume to 40 percent"))
+        assertEquals("volume-level", id("max volume"))
+        assertEquals("volume-invalid", id("volume 400"))
+    }
+
+    @Test fun newToggles() {
+        assertEquals("toggle:Location:off", id("turn off location"))
+        assertEquals("toggle:Battery saver:on", id("turn on battery saver"))
+        assertEquals("toggle:NFC:on", id("nfc on"))
+        assertEquals("rotate-on", id("auto rotate on"))
+        assertEquals("rotate-off", id("lock rotation"))
+    }
+
+    @Test fun webMapsCamera() {
+        assertEquals("search", id("search for pizza near me"))
+        assertEquals("search", id("google how tall is everest"))
+        assertEquals("navigate", id("navigate to the airport"))
+        assertEquals("navigate", id("take me to the beach"))
+        assertEquals("settings:wifi", id("take me to wifi settings"))
+        assertEquals("camera-photo", id("take a selfie"))
+        assertEquals("camera-video", id("record a video"))
+        assertEquals("info-storage", id("how much storage do i have"))
+    }
+
+    @Test fun screenControl() {
+        assertEquals("tap", id("tap send"))
+        assertEquals("tap", id("click on the accept button"))
+        assertEquals("nav-back", id("press back"))
+        assertEquals("type", id("type hello world"))
+        assertEquals("text", id("text mom saying hi"))
+        assertEquals("toggle:Airplane mode:on", id("turn on airplane mode"))
+    }
 }
