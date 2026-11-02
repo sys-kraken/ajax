@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- recognitionService is mandatory: without it Android rejects the assistant and the side key does nothing. -->
 <voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:sessionService="com.ajax.assistant.AjaxSessionService"
+    android:recognitionService="com.ajax.assistant.AjaxRecognitionService"
     android:settingsActivity="com.ajax.assistant.MainActivity"
-    android:supportsAssist="true" />
+    android:supportsAssist="true"
+    android:supportsLaunchVoiceAssistFromKeyguard="true" />

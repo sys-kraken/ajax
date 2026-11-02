@@ -41,7 +41,9 @@ class MainActivity : Activity(), SpeechInput.Callback {
             Step("Microphone", "Needed to hear you.", { has(Manifest.permission.RECORD_AUDIO) },
                 runtime = arrayOf(Manifest.permission.RECORD_AUDIO)),
             Step("Side key (default assistant)",
-                "Pick Ajax under Digital assistant app > Device assistance app. Then holding the side key opens Ajax.",
+                "Pick Ajax under Default apps > Digital assistant app. Then hold the side key (power button). " +
+                    "Samsung: also set Settings > Advanced features > Side button > Press and hold to Digital assistant, not Bixby. " +
+                    "Pixel: Settings > System > Gestures > Press and hold power button > Digital assistant.",
                 { isDefaultAssistant() },
                 intent = { Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS) }),
             Step("Contacts and calling", "Needed for “call …” and “text …”.",
@@ -148,6 +150,18 @@ class MainActivity : Activity(), SpeechInput.Callback {
             addView(root)
             fitsSystemWindows = true
         })
+        if (savedInstanceState == null) handleAssist(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleAssist(intent)
+    }
+
+    /** Fallback path: some phones send the side key as ACTION_ASSIST to this activity. Listen at once. */
+    private fun handleAssist(i: Intent?) {
+        if (i?.action == Intent.ACTION_ASSIST) main.post { startListening() }
     }
 
     override fun onResume() {
@@ -169,7 +183,9 @@ class MainActivity : Activity(), SpeechInput.Callback {
     }
 
     private fun refreshSteps() {
-        status.text = steps.joinToString("\n") { (if (it.granted()) "✓ " else "✗ ") + it.label }
+        val engine = Recognizers.delegate(this)?.packageName ?: "none found — install the Google app"
+        status.text = steps.joinToString("\n") { (if (it.granted()) "✓ " else "✗ ") + it.label } +
+            "\nSpeech engine: $engine"
         val next = steps.firstOrNull { !it.granted() }
         grant.visibility = if (next == null) View.GONE else View.VISIBLE
         hint.visibility = if (next == null) View.GONE else View.VISIBLE

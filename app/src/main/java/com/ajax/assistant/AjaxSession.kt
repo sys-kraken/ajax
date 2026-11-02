@@ -14,7 +14,7 @@ import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
 
-/** The small overlay shown when the side key is held: listens once, acts, then closes. */
+/** The small overlay shown when the side key is held: listens, acts, then closes. */
 class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), SpeechInput.Callback {
 
     private val main = Handler(Looper.getMainLooper())
@@ -24,6 +24,9 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
     private lateinit var heardView: TextView
     private lateinit var resultView: TextView
 
+    /** False once hidden: late speech/TTS callbacks from a previous press are ignored. */
+    private var active = false
+
     override fun onCreateContentView(): View {
         val dp = ctx.resources.displayMetrics.density
         fun pad(v: Int) = (v * dp).toInt()
@@ -31,6 +34,7 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
         resultView = TextView(ctx).apply { textSize = 20f; setTextColor(Color.WHITE) }
         val card = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
+            isClickable = true // taps on the card must not fall through and close the overlay
             setPadding(pad(20), pad(16), pad(20), pad(16))
             background = GradientDrawable().apply {
                 setColor(Color.parseColor("#E6202124"))
@@ -43,12 +47,16 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
             gravity = Gravity.BOTTOM
             setPadding(pad(16), pad(16), pad(16), pad(48))
             addView(card, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-            setOnClickListener { hide() }
+            setOnClickListener { close() }
         }
     }
 
     override fun onShow(args: Bundle?, showFlags: Int) {
         super.onShow(args, showFlags)
+        main.removeCallbacksAndMessages(null)
+        speaker.stop()
+        brain.reset()
+        active = true
         heardView.text = ""
         if (ctx.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             finishWith(Result(false, "Open Ajax and allow the microphone first."))
@@ -59,49 +67,61 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
     }
 
     override fun onHide() {
+        active = false
+        main.removeCallbacksAndMessages(null)
         speech.destroy()
+        speaker.stop()
         super.onHide()
     }
 
     override fun onDestroy() {
+        active = false
+        main.removeCallbacksAndMessages(null)
         speech.destroy()
         speaker.shutdown()
         super.onDestroy()
     }
 
     override fun onListening(mode: String) {
-        resultView.text = "Listening…"
+        if (active) resultView.text = "Listening…"
     }
 
     override fun onPartial(text: String) {
-        heardView.text = "“$text”"
+        if (active) heardView.text = "“$text”"
     }
 
     override fun onResults(candidates: List<String>) {
+        if (!active) return
         val reply = brain.handle(candidates)
         heardView.text = "“${brain.heard}”"
         val after = reply.afterHide
         when {
             after != null -> {
                 // Accessibility acts on the window underneath, so close the overlay first.
-                resultView.text = reply.result.message
-                hide()
-                main.postDelayed({ AjaxAccessibilityService.announce(after()) }, 450)
+                // Own handler: close() destroys the session, which clears `main`.
+                close()
+                Handler(Looper.getMainLooper()).postDelayed({ AjaxAccessibilityService.announce(after()) }, 450)
             }
             reply.listenAgain -> {
                 resultView.text = (if (reply.result.ok) "" else "✗ ") + reply.result.message
-                speaker.speak(reply.result.message) { speech.start() }
+                speaker.speak(reply.result.message) { if (active) speech.start() }
             }
             else -> finishWith(reply.result)
         }
     }
 
     override fun onError(message: String) {
-        finishWith(Result(false, message))
+        if (active) finishWith(Result(false, message))
     }
 
     private fun finishWith(r: Result) {
         resultView.text = (if (r.ok) "✓ " else "✗ ") + r.message
-        speaker.speak(r.message) { main.postDelayed({ hide() }, 900) }
+        speaker.speak(r.message) { if (active) main.postDelayed({ close() }, 900) }
+    }
+
+    /** Tears the session down fully so the next side-key press starts clean. */
+    private fun close() {
+        active = false
+        finish()
     }
 }

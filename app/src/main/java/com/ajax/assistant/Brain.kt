@@ -20,6 +20,12 @@ class Brain(private val ctx: Context) {
     private val yes = setOf("yes", "yeah", "yep", "yup", "confirm", "do it", "send it", "sure", "okay", "ok", "go ahead")
     private val no = setOf("no", "nope", "cancel", "stop", "dont", "don t", "never mind", "nevermind")
 
+    /** Forget any unanswered yes/no question (new side-key press = new conversation). */
+    fun reset() {
+        pending = null
+        heard = ""
+    }
+
     fun handle(candidates: List<String>): Reply {
         heard = candidates.firstOrNull().orEmpty()
         pending?.let { p ->

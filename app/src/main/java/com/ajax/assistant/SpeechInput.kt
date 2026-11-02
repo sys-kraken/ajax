@@ -46,11 +46,10 @@ class SpeechInput(private val ctx: Context, private val cb: Callback) {
     /** [fresh] discards the current recogniser; otherwise it is reused (avoids service disconnects). */
     private fun begin(fresh: Boolean) {
         if (fresh) release()
-        if (!SpeechRecognizer.isRecognitionAvailable(ctx)) {
-            cb.onError("This phone has no speech recognition service.")
+        val r = rec ?: (create() ?: run {
+            cb.onError("This phone has no speech recognition service. Install or update the Google app.")
             return
-        }
-        val r = rec ?: create().also {
+        }).also {
             it.setRecognitionListener(listener)
             rec = it
         }
@@ -65,11 +64,12 @@ class SpeechInput(private val ctx: Context, private val cb: Callback) {
 
     fun destroy() = release()
 
-    private fun create(): SpeechRecognizer {
+    private fun create(): SpeechRecognizer? {
         onDevice = !forceStandard && Build.VERSION.SDK_INT >= 33 &&
             SpeechRecognizer.isOnDeviceRecognitionAvailable(ctx)
-        return if (onDevice) SpeechRecognizer.createOnDeviceSpeechRecognizer(ctx)
-        else SpeechRecognizer.createSpeechRecognizer(ctx)
+        if (onDevice) return SpeechRecognizer.createOnDeviceSpeechRecognizer(ctx)
+        // Never the system default: once Ajax is the assistant, that default is Ajax's own proxy.
+        return Recognizers.delegate(ctx)?.let { SpeechRecognizer.createSpeechRecognizer(ctx, it) }
     }
 
     private fun release() {
@@ -118,7 +118,7 @@ class SpeechInput(private val ctx: Context, private val cb: Callback) {
             cb.onError(
                 when (error) {
                     SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT, SpeechRecognizer.ERROR_CLIENT ->
-                        "I didn't hear anything. Hold the button while you speak."
+                        "I didn't hear anything."
                     SpeechRecognizer.ERROR_AUDIO -> "Microphone problem."
                     SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission is missing."
                     SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT, SpeechRecognizer.ERROR_SERVER ->
