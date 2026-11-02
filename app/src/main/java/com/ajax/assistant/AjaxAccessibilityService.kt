@@ -76,21 +76,37 @@ class AjaxAccessibilityService : AccessibilityService() {
      * Finds the on/off switch for one of [labels] on the current screen and sets it. Polls for a few
      * seconds because the settings page needs time to appear. Reports the outcome itself.
      */
-    fun setSwitch(labels: List<String>, wantOn: Boolean, allowFirstSwitch: Boolean, pretty: String) {
-        attempt(labels, wantOn, allowFirstSwitch, pretty, 0)
+    fun setSwitch(
+        labels: List<String>,
+        wantOn: Boolean,
+        allowFirstSwitch: Boolean,
+        pretty: String,
+        state: ((android.content.Context) -> Boolean?)? = null,
+    ) {
+        handler.removeCallbacksAndMessages(null) // a newer command replaces any still-running one
+        attempt(labels, wantOn, allowFirstSwitch, pretty, state, 0)
     }
 
-    private fun attempt(labels: List<String>, wantOn: Boolean, fallback: Boolean, pretty: String, n: Int) {
-        val root = rootInActiveWindow
+    private fun attempt(
+        labels: List<String>,
+        wantOn: Boolean,
+        fallback: Boolean,
+        pretty: String,
+        state: ((android.content.Context) -> Boolean?)?,
+        n: Int,
+    ) {
+        // Ajax's own screen (hint text, "Speak replies" switch) is still in front for a moment:
+        // never search it, or we read/tap our own switch.
+        val root = rootInActiveWindow?.takeIf { it.packageName?.toString() != packageName }
         val sw = root?.let { findSwitch(it, labels, fallback) }
         if (sw == null) {
             if (n >= 15) say(Result(false, "I couldn't find the $pretty switch on the screen."))
-            else handler.postDelayed({ attempt(labels, wantOn, fallback, pretty, n + 1) }, 400)
+            else handler.postDelayed({ attempt(labels, wantOn, fallback, pretty, state, n + 1) }, 400)
             return
         }
-        val state = if (wantOn) "on" else "off"
-        if (sw.isChecked == wantOn) {
-            say(Result(true, "$pretty is already $state"))
+        val word = if (wantOn) "on" else "off"
+        if ((state?.invoke(this) ?: sw.isChecked) == wantOn) {
+            say(Result(true, "$pretty is already $word"))
             return
         }
         var target: AccessibilityNodeInfo? = sw
@@ -99,13 +115,26 @@ class AjaxAccessibilityService : AccessibilityService() {
             say(Result(false, "I couldn't tap the $pretty switch."))
             return
         }
+        verify(sw, wantOn, pretty, label = word, real = state, n = 0)
+    }
+
+    /** Radios take a few seconds to switch: poll the real state (or the switch) for up to ~4 s. */
+    private fun verify(
+        sw: AccessibilityNodeInfo,
+        wantOn: Boolean,
+        pretty: String,
+        label: String,
+        real: ((android.content.Context) -> Boolean?)?,
+        n: Int,
+    ) {
         handler.postDelayed({
-            sw.refresh()
-            say(
-                if (sw.isChecked == wantOn) Result(true, "$pretty $state")
-                else Result(false, "Tried, but $pretty did not turn $state."),
-            )
-        }, 800)
+            val now = real?.invoke(this) ?: run { sw.refresh(); sw.isChecked }
+            when {
+                now == wantOn -> say(Result(true, "$pretty $label"))
+                n >= 7 -> say(Result(false, "Tried, but $pretty did not turn $label."))
+                else -> verify(sw, wantOn, pretty, label, real, n + 1)
+            }
+        }, 500)
     }
 
     private fun findSwitch(root: AccessibilityNodeInfo, labels: List<String>, fallback: Boolean): AccessibilityNodeInfo? {

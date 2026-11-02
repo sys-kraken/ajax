@@ -169,6 +169,12 @@ class MainActivity : Activity(), SpeechInput.Callback {
         refreshSteps()
     }
 
+    override fun onPause() {
+        // Leaving the screen (e.g. a command opened Settings) must not turn into an error.
+        speech.cancel()
+        super.onPause()
+    }
+
     override fun onDestroy() {
         speech.destroy()
         speaker.shutdown()

@@ -25,6 +25,9 @@ class SpeechInput(private val ctx: Context, private val cb: Callback) {
     private var retriedOnline = false
     private var retriedDisconnect = false
 
+    /** True only between startListening and its result/error. */
+    private var listening = false
+
     /** Off by default: audio stays on the phone. When on, the system recogniser may use the network. */
     private val allowOnline: Boolean
         get() = ctx.getSharedPreferences(Prefs.NAME, Context.MODE_PRIVATE).getBoolean(Prefs.ONLINE, false)
@@ -53,13 +56,23 @@ class SpeechInput(private val ctx: Context, private val cb: Callback) {
             it.setRecognitionListener(listener)
             rec = it
         }
+        listening = true
         r.startListening(intent())
         cb.onListening(if (onDevice) "on-device" else "system recogniser (may use the network)")
     }
 
     /** User released the button: finish and return what was heard. */
     fun stopListening() {
-        rec?.stopListening()
+        // Already finished (e.g. the recogniser ended on silence and the finger is still down, or a
+        // Settings page covered the screen and cancelled the touch): stopping now only yields a bogus
+        // ERROR_CLIENT ("I didn't hear anything").
+        if (listening) rec?.stopListening()
+    }
+
+    /** Abandon the current attempt silently (no result, no error). */
+    fun cancel() {
+        listening = false
+        rec?.cancel()
     }
 
     fun destroy() = release()
@@ -73,6 +86,7 @@ class SpeechInput(private val ctx: Context, private val cb: Callback) {
     }
 
     private fun release() {
+        listening = false
         rec?.destroy()
         rec = null
     }
@@ -91,11 +105,15 @@ class SpeechInput(private val ctx: Context, private val cb: Callback) {
         }
 
         override fun onResults(results: Bundle?) {
+            if (!listening) return
+            listening = false
             val list = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
             if (list.isEmpty()) cb.onError("I didn't catch that.") else cb.onResults(list)
         }
 
         override fun onError(error: Int) {
+            if (!listening) return // stale error after we finished or cancelled
+            listening = false
             // 12/13: language not supported / pack missing. Retry once with the system recogniser.
             if ((error == 12 || error == 13) && onDevice && !retriedStandard) {
                 retriedStandard = true

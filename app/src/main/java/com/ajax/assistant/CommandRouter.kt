@@ -91,18 +91,25 @@ object CommandRouter {
         }
     }
 
-    private class Toggle(val action: String, val labels: List<String>, val firstSwitchFallback: Boolean, val pretty: String)
+    private class Toggle(
+        val action: String,
+        val labels: List<String>,
+        val firstSwitchFallback: Boolean,
+        val pretty: String,
+        /** Real system state, when readable; trusted over what the screen shows. */
+        val state: ((Context) -> Boolean?)? = null,
+    )
 
     private fun toggleFor(name: String): Toggle? = when (name) {
-        "wifi" -> Toggle(Settings.ACTION_WIFI_SETTINGS, listOf("Wi-Fi", "Wifi"), true, "Wi-Fi")
-        "bluetooth" -> Toggle(Settings.ACTION_BLUETOOTH_SETTINGS, listOf("Bluetooth"), true, "Bluetooth")
+        "wifi" -> Toggle(Settings.ACTION_WIFI_SETTINGS, listOf("Wi-Fi", "Wifi"), true, "Wi-Fi", SwitchState::wifi)
+        "bluetooth" -> Toggle(Settings.ACTION_BLUETOOTH_SETTINGS, listOf("Bluetooth"), true, "Bluetooth", SwitchState::bluetooth)
         "mobile data", "cellular data", "data" -> Toggle(
             if (Build.VERSION.SDK_INT >= 29) "android.settings.panel.action.INTERNET_CONNECTIVITY"
             else Settings.ACTION_DATA_ROAMING_SETTINGS,
             listOf("Mobile data"), false, "Mobile data",
         )
         "airplane mode", "airplane", "flight mode" -> Toggle(
-            Settings.ACTION_AIRPLANE_MODE_SETTINGS, listOf("Airplane mode", "Flight mode"), true, "Airplane mode",
+            Settings.ACTION_AIRPLANE_MODE_SETTINGS, listOf("Airplane mode", "Flight mode"), true, "Airplane mode", SwitchState::airplane,
         )
         else -> null
     }
@@ -121,7 +128,10 @@ object CommandRouter {
         val tg = toggleFor(m.first) ?: return null
         val wantOn = m.second == "on"
         return Match("toggle:${tg.pretty}:${m.second}") {
-            if (AjaxAccessibilityService.instance == null) {
+            val now = tg.state?.invoke(it)
+            if (now == wantOn) {
+                Outcome.Done(Result(true, "${tg.pretty} is already ${m.second}"))
+            } else if (AjaxAccessibilityService.instance == null) {
                 Outcome.Done(needsAccessibility)
             } else {
                 Outcome.AfterHide("Turning ${tg.pretty} ${m.second}") { ctx ->
@@ -133,7 +143,7 @@ object CommandRouter {
                     }
                     if (!opened) Result(false, "This phone has no ${tg.pretty} page.")
                     else {
-                        AjaxAccessibilityService.instance?.setSwitch(tg.labels, wantOn, tg.firstSwitchFallback, tg.pretty)
+                        AjaxAccessibilityService.instance?.setSwitch(tg.labels, wantOn, tg.firstSwitchFallback, tg.pretty, tg.state)
                         Result(true, "")
                     }
                 }
