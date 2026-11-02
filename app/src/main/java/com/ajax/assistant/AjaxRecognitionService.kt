@@ -16,7 +16,7 @@ class AjaxRecognitionService : RecognitionService() {
 
     private var rec: SpeechRecognizer? = null
 
-    override fun onStartListening(intent: Intent, cb: Callback) {
+    override fun onStartListening(intent: Intent, cb: RecognitionService.Callback) {
         release()
         val target = Recognizers.delegate(this)
         if (target == null) {
