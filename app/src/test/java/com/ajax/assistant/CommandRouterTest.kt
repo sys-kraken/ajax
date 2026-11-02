@@ -152,4 +152,32 @@ class CommandRouterTest {
         assertEquals("text", id("text mom saying hi"))
         assertEquals("toggle:Airplane mode:on", id("turn on airplane mode"))
     }
+
+    @Test fun everydayPhrasing() {
+        assertEquals("torch-off", id("kill the light"))
+        assertEquals("torch-on", id("i need some light"))
+        assertEquals("volume-down", id("make it quieter"))
+        assertEquals("mute", id("turn the sound off"))
+        assertEquals("media-playing", id("put some music on"))
+        assertEquals("media-next-track", id("skip this one"))
+        assertEquals("toggle:Wi-Fi:off", id("disconnect from the wifi"))
+        assertEquals("toggle:Wi-Fi:on", id("turn wifi back on"))
+        assertEquals("toggle:Battery saver:on", id("my battery is dying save power"))
+        assertEquals("info-battery", id("is my phone charged"))
+        assertEquals("info-time", id("do you have the time"))
+        assertEquals("info-date", id("which day is it"))
+        assertEquals("info-storage", id("am i running out of space"))
+        assertEquals("info-notifications", id("any new messages"))
+        assertEquals("rotate-off", id("stop the screen from rotating"))
+        assertEquals("navigate", id("how do i get to the airport"))
+        assertEquals("settings:main", id("open phone settings"))
+    }
+
+    @Test fun lookalikesDoNotMisfire() {
+        assertNull(CommandRouter.route("turn on light mode")?.id?.takeIf { it.startsWith("torch") })
+        assertEquals("toggle:Battery saver:on", id("turn on battery saver"))
+        assertNull(CommandRouter.route("how do i save battery")?.id?.takeIf { it == "info-battery" })
+        assertNull(CommandRouter.route("is it going to rain today")?.id?.takeIf { it == "info-date" })
+        assertEquals("timer", id("set a timer for 5 minutes"))
+    }
 }

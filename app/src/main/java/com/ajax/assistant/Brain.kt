@@ -60,17 +60,27 @@ class Brain(private val ctx: Context) {
             ?: { Reply(Result(false, "I don't know that command yet.")) }
 
         // 2. Loose phrasing: the on-device model picks one command from the same table.
-        if (!IntentModel.available(ctx)) { done(fallback()); return }
+        if (!IntentModel.available(ctx)) { done(questionOr(heard, fallback)); return }
         onThinking()
         val gen = generation
         val said = heard
         IntentModel.interpret(ctx, said) { phrase ->
             if (gen != generation) return@interpret
             val m = phrase?.let { CommandRouter.route(it) }?.takeIf { it.sure(ctx) }
-            if (phrase == null || m == null) { done(fallback()); return@interpret }
+            if (phrase == null || m == null) { done(questionOr(said, fallback)); return@interpret }
             heard = "$said (understood as: $phrase)"
             done(run(m, fromModel = true, phrase = phrase))
         }
+    }
+
+    /** Nothing matched: a real question ("how tall is everest") becomes a web search; else [fallback]. */
+    private fun questionOr(said: String, fallback: () -> Reply): Reply {
+        val t = CommandRouter.normalize(said)
+        if (!Regex("^(?:who|what|whats|where|wheres|when|why|how|which|is|are|can|does|did)\\b").containsMatchIn(t)) {
+            return fallback()
+        }
+        val search = CommandRouter.route("search for $t") ?: return fallback()
+        return run(search, fromModel = false)
     }
 
     private fun run(m: CommandRouter.Match, fromModel: Boolean, phrase: String = ""): Reply {

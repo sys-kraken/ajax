@@ -1,0 +1,31 @@
+# Held-out phrases: written before tuning and never used to tune rules or prompts.
+switch off the flashlight please	flashlight off
+its pitch black in here	flashlight on
+lower the volume a little	volume down
+turn up the music	volume up
+pause the song	pause music
+resume playback	play music
+play the next song	next song
+turn wifi back on	turn on wifi
+cut the bluetooth	turn off bluetooth
+enable flight mode	turn on airplane mode
+turn data off	turn off mobile data
+i need to save battery	turn on battery saver
+turn off gps	turn off location
+make the screen dimmer	brightness min|brightness 1 percent
+silence my phone	silent mode
+put it on vibrate	vibrate mode
+how charged is my phone	whats my battery
+what day is today	whats the date
+do you have the time	what time is it
+alarm at 8 30 pm	set an alarm for 8 30 pm
+set a 15 minute timer	timer 15 minutes
+snap a photo	take a photo
+capture the screen	take a screenshot
+go to the home screen	go home
+call my brother	call my brother|call brother
+text sam saying see you soon	text sam saying see you soon
+search for cheap flights to paris	search for cheap flights to paris
+get directions to central park	navigate to central park
+open the calculator	open calculator|open the calculator
+open bluetooth settings	bluetooth settings

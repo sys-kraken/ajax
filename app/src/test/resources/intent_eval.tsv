@@ -51,7 +51,7 @@ film something	record a video
 grab a screenshot	take a screenshot
 lock it	lock the phone
 show me my recent apps	recent apps
-take me home	go home
+take me home	go home|navigate to home
 go to the previous screen	go back
 scroll a bit further	scroll down
 open my notifications	open notifications

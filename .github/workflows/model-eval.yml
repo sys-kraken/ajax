@@ -1,6 +1,8 @@
 name: model-eval
-# Runs the phone's exact inference code (llm_core) with the real model, prompt and grammar over
-# app/src/test/resources/intent_eval.tsv. Fails if accuracy drops below the bar.
+# Scores the app's real pipeline: regex rules first (scored by EvalExportTest), then the on-device
+# model on what the rules leave (run with the phone's own llm_core, prompt and grammar).
+# Two sets: "main" and "holdout" (never used for tuning). The app's model must reach MIN_ACCURACY on
+# both. A larger candidate model is scored alongside for comparison only.
 on:
   push:
   workflow_dispatch:
@@ -9,6 +11,19 @@ env:
 jobs:
   eval:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: qwen2.5-0.5b (app model)
+            file: qwen2.5-0.5b-instruct-q4_0.gguf
+            repo: Qwen/Qwen2.5-0.5B-Instruct-GGUF
+            gate: true
+          - name: qwen2.5-1.5b (candidate)
+            file: qwen2.5-1.5b-instruct-q4_0.gguf
+            repo: Qwen/Qwen2.5-1.5B-Instruct-GGUF
+            gate: false
+    name: eval ${{ matrix.name }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -16,30 +31,43 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
-      - name: Export prompts and grammar from the app code
+      - name: Score rules and export model cases from app code
         run: ./gradlew --no-daemon testDebugUnitTest --tests 'com.ajax.assistant.EvalExportTest'
-      - name: Model file (cached by hash)
-        id: model
-        run: |
-          f=app/src/main/java/com/ajax/assistant/ModelManager.kt
-          echo "url=$(grep -A1 'const val URL_STRING' "$f" | grep -o 'https://[^"]*')" >> "$GITHUB_OUTPUT"
-          echo "sha=$(grep -o 'const val SHA256 = "[^"]*"' "$f" | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v4
         with:
-          path: model.gguf
-          key: model-${{ steps.model.outputs.sha }}
-      - name: Download and verify model
+          path: ${{ matrix.file }}
+          key: model-${{ matrix.file }}
+      - name: Download model
         run: |
-          [ -f model.gguf ] || curl -fL --retry 3 -o model.gguf "${{ steps.model.outputs.url }}"
-          echo "${{ steps.model.outputs.sha }}  model.gguf" | sha256sum -c -
+          [ -f "${{ matrix.file }}" ] || curl -fL --retry 3 -o "${{ matrix.file }}" \
+            "https://huggingface.co/${{ matrix.repo }}/resolve/main/${{ matrix.file }}"
+          echo "sha256 $(sha256sum "${{ matrix.file }}" | cut -d' ' -f1)  size $(stat -c %s "${{ matrix.file }}")"
+      - name: Verify the app model's pinned hash
+        if: matrix.gate
+        run: |
+          want=$(grep -o 'const val SHA256 = "[^"]*"' app/src/main/java/com/ajax/assistant/ModelManager.kt | cut -d'"' -f2)
+          echo "$want  ${{ matrix.file }}" | sha256sum -c -
       - name: Build host eval tool (same llm_core as the phone)
         run: |
           cmake -S app/src/main/cpp -B host-build -DCMAKE_BUILD_TYPE=Release
           cmake --build host-build -j"$(nproc)" --target ajax_eval
       - name: Run eval
         run: |
-          host-build/ajax_eval model.gguf app/build/eval | tee eval.txt
-          acc=$(grep -o 'accuracy=[0-9.]*' eval.txt | cut -d= -f2)
-          echo "### Intent model: ${acc}% (bar ${MIN_ACCURACY}%)" >> "$GITHUB_STEP_SUMMARY"
-          grep -E '^(FAIL|RESULT)' eval.txt | sed 's/^/    /' >> "$GITHUB_STEP_SUMMARY"
-          awk -v a="$acc" -v m="$MIN_ACCURACY" 'BEGIN { exit !(a >= m) }'
+          echo "## ${{ matrix.name }}" >> "$GITHUB_STEP_SUMMARY"
+          fail=0
+          for set in main holdout; do
+            d=app/build/eval/$set
+            host-build/ajax_eval "${{ matrix.file }}" "$d" > "model-$set.txt" 2> "log-$set.txt"
+            read rp rt < <(grep -o 'ROUTER pass=[0-9]* total=[0-9]*' "$d/router.txt" | grep -o '[0-9]*' | xargs)
+            read mp mt < <(grep -o 'RESULT pass=[0-9]* total=[0-9]*' "model-$set.txt" | grep -o '[0-9]*' | xargs)
+            lat=$(grep -o 'avg_ms=[0-9]* max_ms=[0-9]*' "model-$set.txt")
+            acc=$(awk -v a=$((rp+mp)) -v b=$((rt+mt)) 'BEGIN { printf "%.1f", 100*a/b }')
+            line="$set: ${acc}% overall ($((rp+mp))/$((rt+mt))) | rules $rp/$rt | model $mp/$mt | $lat"
+            echo "$line"
+            echo "- $line" >> "$GITHUB_STEP_SUMMARY"
+            grep -h FAIL "$d/router.txt" "model-$set.txt" | sed 's/^/      /' | tee -a "$GITHUB_STEP_SUMMARY"
+            awk -v a="$acc" -v m="$MIN_ACCURACY" 'BEGIN { exit !(a >= m) }' || fail=1
+          done
+          if [ "${{ matrix.gate }}" = "true" ] && [ $fail -ne 0 ]; then
+            echo "Below ${MIN_ACCURACY}% on at least one set"; exit 1
+          fi
