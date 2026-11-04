@@ -1,4 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="a11y_description">Lets Ajax press Back and Home, scroll, take screenshots and flip switches such as Wi-Fi when you ask by voice. It does not read or store what is on your screen.</string>
+    <string name="a11y_description">Lets Ajax press Back and Home, scroll, take screenshots, flip switches such as Wi-Fi, and tap a button or type into a text box when you ask by voice. It looks at the screen only while carrying out your command, and never stores or sends what it sees.</string>
 </resources>

@@ -54,6 +54,13 @@ class Speaker(ctx: Context) : TextToSpeech.OnInitListener {
         main.post { callbacks.remove(id)?.invoke() }
     }
 
+    /** Stops talking and drops pending callbacks (overlay closed mid-sentence). */
+    fun stop() {
+        pending = null
+        callbacks.clear()
+        if (ready) tts.stop()
+    }
+
     fun shutdown() {
         tts.stop()
         tts.shutdown()

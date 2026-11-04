@@ -9,7 +9,17 @@ import android.provider.Settings
 /** Turns recognised text into one action. Keyword/regex matching only. */
 object CommandRouter {
 
-    class Match(val id: String, val start: (Context) -> Outcome)
+    /**
+     * [sure] = false means this match can only give a hint or error (e.g. "say on or off", app not
+     * installed). The Brain then lets the on-device model try first, keeping this as the fallback.
+     */
+    class Match(
+        val id: String,
+        val sure: (Context) -> Boolean = { true },
+        /** Only a hint/error; never the real answer (lets tests classify matches without a phone). */
+        val hintOnly: Boolean = false,
+        val start: (Context) -> Outcome,
+    )
 
     private val needsAccessibility =
         Result(false, "This needs Accessibility. Open Ajax and turn it on.")
@@ -30,6 +40,9 @@ object CommandRouter {
         add(Settings.ACTION_NFC_SETTINGS, "nfc")
     }
 
+    /** Settings pages Ajax can open by name (used by the model's command table). */
+    val settingsPageNames: Set<String> get() = pages.keys
+
     fun normalize(raw: String): String {
         var s = raw.lowercase().trim()
         s = s.replace(Regex("['’]"), "")
@@ -40,36 +53,119 @@ object CommandRouter {
         s = s.replace(Regex("screen shot"), "screenshot")
         s = s.replace(Regex("^(hey |ok |okay )?(ajax )?(please )?(can you |could you )?(please )?"), "").trim()
         s = s.removeSuffix(" please").trim()
+        // Trailing filler never changes a command: "what is the time right now", "wifi off now".
+        s = s.replace(Regex("\\s+(?:right now|now|for me|please)$"), "").trim()
         return s
     }
 
     fun route(raw: String): Match? {
         val t = normalize(raw)
         if (t.isEmpty()) return null
-        return volume(t) ?: ringer(t) ?: torch(t) ?: toggle(t) ?: brightness(t) ?: dnd(t) ?: nav(t)
-            ?: info(t) ?: alarm(t) ?: timer(t) ?: sms(raw) ?: appInfo(t) ?: settings(t) ?: call(t) ?: openApp(t)
+        return volume(t) ?: media(t) ?: ringer(t) ?: torch(t) ?: rotate(t) ?: toggle(t) ?: brightness(t) ?: dnd(t)
+            ?: nav(t) ?: sms(raw) ?: screen(t) ?: info(t) ?: alarm(t) ?: timer(t) ?: camera(t) ?: search(t)
+            ?: navigate(t) ?: appInfo(t) ?: settings(t) ?: call(t) ?: openApp(t)
     }
 
     private fun done(id: String, f: (Context) -> Result) = Match(id) { Outcome.Done(f(it)) }
 
+    /** A hint-only answer: shown only if the model can't do better. */
+    private fun hint(id: String, message: String) =
+        Match(id, sure = { false }, hintOnly = true) { Outcome.Done(Result(false, message)) }
+
     // ---- Sound -------------------------------------------------------------------------------
 
     private fun volume(t: String): Match? = when {
-        Regex("^(volume up|turn (the )?volume up|turn it up|increase (the )?volume|raise (the )?volume|louder)$").matches(t) ->
+        Regex("^(?:volume up|louder|make it louder|(?:turn|crank|pump) (?:it|the volume|the sound|the music) up|" +
+            "turn up (?:the )?(?:volume|sound|music)|(?:increase|raise|boost) (?:the )?(?:volume|sound)|" +
+            "i cant hear(?: anything| it)?)$").matches(t) ->
             done("volume-up") { Actions.volume(it, AudioManager.ADJUST_RAISE, "Volume up") }
-        Regex("^(volume down|turn (the )?volume down|turn it down|decrease (the )?volume|lower (the )?volume|quieter)$").matches(t) ->
+        Regex("^(?:volume down|quieter|softer|make it (?:quieter|softer)|turn (?:it|the volume|the sound|the music) down|" +
+            "turn down (?:the )?(?:volume|sound|music)|(?:decrease|lower|reduce) (?:the )?(?:volume|sound)(?: a (?:little|bit))?)$").matches(t) ->
             done("volume-down") { Actions.volume(it, AudioManager.ADJUST_LOWER, "Volume down") }
-        Regex("^(mute|mute (the )?(sound|volume|phone))$").matches(t) ->
+        Regex("^(?:mute|mute (?:the )?(?:sound|volume|phone|it)|(?:turn|switch) (?:the )?sound off|" +
+            "(?:turn|switch) off (?:the )?sound|sound off|shut up|be quiet)$").matches(t) ->
             done("mute") { Actions.volume(it, AudioManager.ADJUST_MUTE, "Muted") }
         Regex("^(unmute|unmute (the )?(sound|volume|phone))$").matches(t) ->
             done("unmute") { Actions.volume(it, AudioManager.ADJUST_UNMUTE, "Unmuted") }
+        Regex("^(?:volume (?:max|maximum|full)|max(?:imum)? volume|full volume)$").matches(t) ->
+            done("volume-level") { Actions.volumeLevel(it, 100) }
+        else -> Regex("^(?:set (?:the )?)?volume (?:to |at )?(\\d{1,3})(?: percent)?$").matchEntire(t)?.let { m ->
+            val p = m.groupValues[1].toInt()
+            if (p in 0..100) done("volume-level") { Actions.volumeLevel(it, p) }
+            else hint("volume-invalid", "Say a volume from 0 to 100 percent.")
+        }
+    }
+
+    private fun media(t: String): Match? {
+        val key = when {
+            Regex("^(?:play|resume|play (?:some |the )?music|play something|(?:put|turn) (?:some |the )?music on|" +
+                "start the music|(?:resume|continue) (?:the )?(?:music|song|playback))$").matches(t) ->
+                android.view.KeyEvent.KEYCODE_MEDIA_PLAY to "Playing"
+            Regex("^(?:pause|pause (?:the )?(?:music|song|it)|(?:stop|hold) (?:the )?(?:music|song))$").matches(t) ->
+                android.view.KeyEvent.KEYCODE_MEDIA_PAUSE to "Paused"
+            Regex("^(?:next|skip|next (?:one|song|track)|skip (?:this one|it|ahead)|skip (?:this |the )?(?:song|track)|" +
+                "play the next (?:song|track))$").matches(t) ->
+                android.view.KeyEvent.KEYCODE_MEDIA_NEXT to "Next track"
+            Regex("^(?:previous|previous (?:one|song|track)|last (?:song|track)|go back a (?:song|track)|" +
+                "play the previous (?:song|track))$").matches(t) ->
+                android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS to "Previous track"
+            else -> return null
+        }
+        return done("media-${key.second.lowercase().replace(' ', '-')}") { Actions.media(it, key.first, key.second) }
+    }
+
+    private fun rotate(t: String): Match? = when {
+        Regex("^(?:turn on |enable )?auto ?rotat(?:e|ion)(?: on)?$|^unlock (?:the )?rotation$|^rotation lock off$|" +
+            "^let the screen rotate$|^(?:allow|enable) (?:screen )?rotation$").matches(t) ->
+            done("rotate-on") { Actions.autoRotate(it, true) }
+        Regex("^(?:turn off |disable )auto ?rotat(?:e|ion)$|^auto ?rotat(?:e|ion) off$|^lock (?:the )?rotation$|^rotation lock on$|" +
+            "^(?:stop|dont let) the screen (?:from )?rotat(?:e|ing)$").matches(t) ->
+            done("rotate-off") { Actions.autoRotate(it, false) }
         else -> null
     }
 
+    private fun camera(t: String): Match? = when {
+        Regex("^(?:take|snap) (?:a )?(?:photo|picture|pic|selfie)$|^(?:open|get me to|go to) (?:the )?camera(?: app)?$|^camera$").matches(t) ->
+            done("camera-photo") { Actions.camera(it, false) }
+        Regex("^(?:record|take|shoot|film) (?:a )?(?:video|something)$|^start recording$").matches(t) ->
+            done("camera-video") { Actions.camera(it, true) }
+        else -> null
+    }
+
+    private fun search(t: String): Match? {
+        val m = Regex("^(?:search|google|look up|search the web) (?:for )?(.+)$").matchEntire(t) ?: return null
+        val q = m.groupValues[1].trim()
+        return done("search") { Actions.webSearch(it, q) }
+    }
+
+    private fun navigate(t: String): Match? {
+        val m = Regex("^(?:navigate|directions|get directions|drive|take me|how do i get) to (.+)$").matchEntire(t)
+            ?: Regex("^(?:navigate|take me|how do i get|drive) (home)$").matchEntire(t)
+            ?: return null
+        val place = m.groupValues[1].trim()
+        if (place.endsWith(" settings")) return null // "take me to wifi settings" is a settings page
+        return done("navigate") { Actions.navigate(it, place) }
+    }
+
+    /** Acts on whatever app is on screen: tap a button by its label, or type into the focused field. */
+    private fun screen(t: String): Match? {
+        Regex("^(?:tap|click|press|hit|select)(?: on)? (?:the )?(.+?)(?: button)?$").matchEntire(t)?.let { m ->
+            val label = m.groupValues[1].trim()
+            return nav("tap", "Tapping $label") { it.tap(label) }
+        }
+        Regex("^type (.+)$").matchEntire(t)?.let { m ->
+            val text = m.groupValues[1].trim()
+            return nav("type", "Typing") { it.type(text) }
+        }
+        return null
+    }
+
     private fun ringer(t: String): Match? = when {
-        Regex("^(vibrate|vibrate mode|vibration mode|set to vibrate|put (the )?phone on vibrate)$").matches(t) ->
+        Regex("^(?:vibrate|vibrate mode|vibration mode|vibrate only|set to vibrate|" +
+            "(?:put|set) (?:it|the phone|my phone) (?:on|to) vibrate)$").matches(t) ->
             done("ringer-vibrate") { Actions.ringer(it, AudioManager.RINGER_MODE_VIBRATE, "Vibrate mode") }
-        Regex("^(silent|silent mode|silence (the )?phone)$").matches(t) ->
+        Regex("^(?:silent|silent mode|silence (?:the |my )?phone|(?:put|set) (?:it|the phone|my phone) (?:on|to) silent|" +
+            "no ringing|dont ring|stop ringing)$").matches(t) ->
             done("ringer-silent") { Actions.ringer(it, AudioManager.RINGER_MODE_SILENT, "Silent mode") }
         Regex("^(sound mode|normal mode|ring mode|ringer on|unsilence|unsilence (the )?phone)$").matches(t) ->
             done("ringer-normal") { Actions.ringer(it, AudioManager.RINGER_MODE_NORMAL, "Sound mode") }
@@ -78,62 +174,92 @@ object CommandRouter {
 
     // ---- Hardware ----------------------------------------------------------------------------
 
-    private val torchWord = Regex("\\b(flashlight|flash light|torch)\\b")
+    private val torchWord = Regex("\\b(flashlight|flash light|torch|light)\\b")
 
     private fun torch(t: String): Match? {
         if (!torchWord.containsMatchIn(t)) return null
-        val on = Regex("\\bon\\b").containsMatchIn(t)
-        val off = Regex("\\boff\\b").containsMatchIn(t)
+        if (Regex("\\blight (?:mode|theme)\\b").containsMatchIn(t)) return null // display theme, not the torch
+        val on = Regex("\\b(?:on|need|want)\\b").containsMatchIn(t)
+        val off = Regex("\\b(?:off|kill|stop|cut)\\b").containsMatchIn(t)
         return when {
             on && !off -> done("torch-on") { Actions.torch(it, true) }
             off && !on -> done("torch-off") { Actions.torch(it, false) }
-            else -> done("torch-unclear") { Result(false, "Say flashlight on, or flashlight off.") }
+            Regex("^(?:toggle |switch )?(?:the )?(?:flashlight|flash light|torch)$").matches(t) ->
+                done("torch-toggle") { Actions.torchToggle(it) }
+            else -> hint("torch-unclear", "Say flashlight on, or flashlight off.")
         }
     }
 
-    private class Toggle(val action: String, val labels: List<String>, val firstSwitchFallback: Boolean, val pretty: String)
+    private class Toggle(
+        val action: String,
+        val labels: List<String>,
+        val firstSwitchFallback: Boolean,
+        val pretty: String,
+        /** Real system state, when readable; trusted over what the screen shows. */
+        val state: ((Context) -> Boolean?)? = null,
+    )
+
+    private const val INTERNET_PANEL = "android.settings.panel.action.INTERNET_CONNECTIVITY"
 
     private fun toggleFor(name: String): Toggle? = when (name) {
-        "wifi" -> Toggle(Settings.ACTION_WIFI_SETTINGS, listOf("Wi-Fi", "Wifi"), true, "Wi-Fi")
-        "bluetooth" -> Toggle(Settings.ACTION_BLUETOOTH_SETTINGS, listOf("Bluetooth"), true, "Bluetooth")
+        "wifi" -> Toggle(Settings.ACTION_WIFI_SETTINGS, listOf("Wi-Fi", "Wifi", "WLAN"), true, "Wi-Fi", SwitchState::wifi)
+        "bluetooth" -> Toggle(Settings.ACTION_BLUETOOTH_SETTINGS, listOf("Bluetooth"), true, "Bluetooth", SwitchState::bluetooth)
         "mobile data", "cellular data", "data" -> Toggle(
-            if (Build.VERSION.SDK_INT >= 29) "android.settings.panel.action.INTERNET_CONNECTIVITY"
-            else Settings.ACTION_DATA_ROAMING_SETTINGS,
+            INTERNET_PANEL,
             listOf("Mobile data"), false, "Mobile data",
         )
         "airplane mode", "airplane", "flight mode" -> Toggle(
-            Settings.ACTION_AIRPLANE_MODE_SETTINGS, listOf("Airplane mode", "Flight mode"), true, "Airplane mode",
+            Settings.ACTION_AIRPLANE_MODE_SETTINGS, listOf("Airplane mode", "Flight mode"), true, "Airplane mode", SwitchState::airplane,
         )
+        "location", "gps" -> Toggle(
+            Settings.ACTION_LOCATION_SOURCE_SETTINGS, listOf("Use location", "Location"), true, "Location", SwitchState::location,
+        )
+        "battery saver", "power saving", "power saving mode" -> Toggle(
+            Settings.ACTION_BATTERY_SAVER_SETTINGS, listOf("Use Battery Saver", "Battery Saver", "Power saving"), true,
+            "Battery saver", SwitchState::batterySaver,
+        )
+        "nfc" -> Toggle(Settings.ACTION_NFC_SETTINGS, listOf("NFC", "Use NFC", "NFC and contactless payments"), true, "NFC", SwitchState::nfc)
         else -> null
     }
 
-    private const val TOGGLE_NAMES = "wifi|bluetooth|mobile data|cellular data|data|airplane mode|airplane|flight mode"
+    private const val TOGGLE_NAMES = "wifi|bluetooth|mobile data|cellular data|data|airplane mode|airplane|flight mode|" +
+        "location|gps|battery saver|power saving mode|power saving|nfc"
 
     /** Switches Android won't let apps flip: open the page, then tap the switch with Accessibility. */
     private fun toggle(t: String): Match? {
-        val m = Regex("^(?:turn|switch) (on|off)(?: the)? ($TOGGLE_NAMES)$").matchEntire(t)?.let { it.groupValues[2] to it.groupValues[1] }
-            ?: Regex("^(?:turn|switch) (?:the )?($TOGGLE_NAMES) (on|off)$").matchEntire(t)?.let { it.groupValues[1] to it.groupValues[2] }
-            ?: Regex("^($TOGGLE_NAMES) (on|off)$").matchEntire(t)?.let { it.groupValues[1] to it.groupValues[2] }
-            ?: Regex("^(enable|disable) (?:the )?($TOGGLE_NAMES)$").matchEntire(t)?.let {
-                it.groupValues[2] to if (it.groupValues[1] == "enable") "on" else "off"
-            }
+        val on = "turn on|switch on|turn back on|enable|activate|connect to|start using"
+        val off = "turn off|switch off|disable|deactivate|disconnect from|disconnect|stop using|kill|cut"
+        val m = Regex("^(?:$on) (?:the |my )?($TOGGLE_NAMES)$").matchEntire(t)?.let { it.groupValues[1] to "on" }
+            ?: Regex("^(?:$off) (?:the |my )?($TOGGLE_NAMES)$").matchEntire(t)?.let { it.groupValues[1] to "off" }
+            ?: Regex("^(?:turn|switch) (?:the |my )?($TOGGLE_NAMES)(?: back)? (on|off)$").matchEntire(t)?.let { it.groupValues[1] to it.groupValues[2] }
+            ?: Regex("^($TOGGLE_NAMES)(?: back)? (on|off)$").matchEntire(t)?.let { it.groupValues[1] to it.groupValues[2] }
+            ?: Regex("\\bsav(?:e|ing) (?:the )?(?:battery|power)$").find(t)?.let { "battery saver" to "on" }
             ?: return null
         val tg = toggleFor(m.first) ?: return null
         val wantOn = m.second == "on"
         return Match("toggle:${tg.pretty}:${m.second}") {
-            if (AjaxAccessibilityService.instance == null) {
+            val now = tg.state?.invoke(it)
+            if (now == wantOn) {
+                Outcome.Done(Result(true, "${tg.pretty} is already ${m.second}"))
+            } else if (AjaxAccessibilityService.instance == null) {
                 Outcome.Done(needsAccessibility)
             } else {
                 Outcome.AfterHide("Turning ${tg.pretty} ${m.second}") { ctx ->
                     val opened = try {
-                        ctx.startActivity(Intent(tg.action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        // The internet panel exists from Android 10; older phones get the mobile network page.
+                        val action = if (tg.action == INTERNET_PANEL && Build.VERSION.SDK_INT < 29) {
+                            Settings.ACTION_DATA_ROAMING_SETTINGS
+                        } else {
+                            tg.action
+                        }
+                        ctx.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                         true
                     } catch (e: android.content.ActivityNotFoundException) {
                         false
                     }
                     if (!opened) Result(false, "This phone has no ${tg.pretty} page.")
                     else {
-                        AjaxAccessibilityService.instance?.setSwitch(tg.labels, wantOn, tg.firstSwitchFallback, tg.pretty)
+                        AjaxAccessibilityService.instance?.setSwitch(tg.labels, wantOn, tg.firstSwitchFallback, tg.pretty, tg.state)
                         Result(true, "")
                     }
                 }
@@ -146,7 +272,7 @@ object CommandRouter {
         Regex("$prefix(\\d{1,3})(?: percent)?$").matchEntire(t)?.let { m ->
             val p = m.groupValues[1].toInt()
             if (p in 1..100) return done("brightness") { Actions.brightness(it, p) }
-            return done("brightness-invalid") { Result(false, "Say a brightness from 1 to 100 percent.") }
+            return hint("brightness-invalid", "Say a brightness from 1 to 100 percent.")
         }
         if (Regex("$prefix(?:max|maximum|full)$").matches(t)) return done("brightness") { Actions.brightness(it, 100) }
         if (Regex("$prefix(?:min|minimum|lowest)$").matches(t)) return done("brightness") { Actions.brightness(it, 1) }
@@ -156,7 +282,8 @@ object CommandRouter {
     private const val DND = "(?:do not disturb|dont disturb|dnd)(?: mode)?"
 
     private fun dnd(t: String): Match? = when {
-        Regex("^(?:turn on|enable|switch on|start|activate) (?:the )?$DND$|^$DND on$").matches(t) ->
+        Regex("^(?:turn on|enable|switch on|start|activate) (?:the )?$DND$|^$DND on$|^dont disturb me$|" +
+            "^(?:no|i dont want any) interruptions$").matches(t) ->
             done("dnd-on") { Actions.dnd(it, true) }
         Regex("^(?:turn off|disable|switch off|stop|deactivate) (?:the )?$DND$|^$DND off$").matches(t) ->
             done("dnd-off") { Actions.dnd(it, false) }
@@ -171,7 +298,7 @@ object CommandRouter {
     }
 
     private fun nav(t: String): Match? = when {
-        Regex("^(?:go )?back$").matches(t) ->
+        Regex("^(?:go |press )?back$").matches(t) ->
             nav("nav-back", "Going back") { it.global(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK, "Back") }
         Regex("^(?:go )?home$|^go to (?:the )?home(?: screen)?$|^home screen$").matches(t) ->
             nav("nav-home", "Going home") { it.global(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME, "Home") }
@@ -183,10 +310,10 @@ object CommandRouter {
             nav("nav-quick-settings", "Quick settings") { it.global(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_QUICK_SETTINGS, "Quick settings") }
         Regex("^(?:take (?:a )?)?screenshot$").matches(t) ->
             nav("nav-screenshot", "Taking a screenshot") { it.globalApi28(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT, "Screenshot taken") }
-        Regex("^lock (?:the |my )?(?:phone|screen|device)$").matches(t) ->
+        Regex("^lock (?:the |my )?(?:phone|screen|device|it)$|^lock it$").matches(t) ->
             nav("nav-lock", "Locking the phone") { it.globalApi28(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN, "Locked") }
-        Regex("^scroll (up|down)$").matches(t) -> {
-            val down = t.endsWith("down")
+        Regex("^scroll (?:a bit |a little )?(up|down|further|more)$").matches(t) -> {
+            val down = !t.endsWith("up")
             nav("nav-scroll-${if (down) "down" else "up"}", "Scrolling") { it.scroll(down) }
         }
         else -> null
@@ -194,16 +321,30 @@ object CommandRouter {
 
     // ---- Info --------------------------------------------------------------------------------
 
-    private fun info(t: String): Match? = when {
-        Regex("^(?:whats|what is|how much is|how is)(?: my| the)? battery(?: level| life| percentage)?$|^battery (?:level|status|percentage)$|^how much battery(?: do i have| is left| left)?$").matches(t) ->
-            done("info-battery") { Actions.battery(it) }
-        Regex("^(?:whats|what is) the time$|^what time is it(?: now)?$|^time$|^tell me the time$|^current time$").matches(t) ->
-            done("info-time") { Actions.time() }
-        Regex("^(?:whats|what is) (?:the |todays )?date(?: today)?$|^what day is it(?: today)?$").matches(t) ->
-            done("info-date") { Actions.date() }
-        Regex("^(?:read|check) (?:my )?notifications$").matches(t) ->
-            done("info-notifications") { Actions.readNotifications(it) }
-        else -> null
+    /** A question ("what's…", "how much…", "is my…", "do you…"), as opposed to a command. */
+    private val question = Regex("^(?:how|hows|what|whats|which|when|is|are|am|check|tell me|do you|do i|any)\\b")
+
+    private fun has(t: String, words: String) = Regex("\\b(?:$words)\\b").containsMatchIn(t)
+
+    private fun info(t: String): Match? {
+        val q = question.containsMatchIn(t)
+        return when {
+            Regex("^battery(?: level| status| percentage)?$").matches(t) ||
+                q && has(t, "battery|charged|charge") && !has(t, "saver|saving|save|settings") ->
+                done("info-battery") { Actions.battery(it) }
+            Regex("^(?:time|current time)$").matches(t) ||
+                q && has(t, "time") && !has(t, "timer|settings|zone|alarm") ->
+                done("info-time") { Actions.time() }
+            Regex("^(?:date|todays date)$").matches(t) ||
+                q && has(t, "date|day") && !has(t, "settings|update|alarm|weather") ->
+                done("info-date") { Actions.date() }
+            Regex("^(?:read|check) (?:my )?(?:notifications|messages)$").matches(t) ||
+                q && has(t, "notifications|new messages") ->
+                done("info-notifications") { Actions.readNotifications(it) }
+            q && has(t, "storage|space") || Regex("running out of (?:space|storage)").containsMatchIn(t) ->
+                done("info-storage") { Actions.storage() }
+            else -> null
+        }
     }
 
     // ---- Time --------------------------------------------------------------------------------
@@ -247,7 +388,7 @@ object CommandRouter {
         val m = Regex("^(?:call|dial|phone|ring) (.+)$").matchEntire(t) ?: return null
         val who = m.groupValues[1].trim()
         if (Regex("^[0-9 ]+$").matches(who)) {
-            return done("call-number") { Result(false, "Calling phone numbers isn't supported yet. Say a contact name.") }
+            return hint("call-number", "Calling phone numbers isn't supported yet. Say a contact name.")
         }
         return done("call") { Actions.call(it, who) }
     }
@@ -259,12 +400,14 @@ object CommandRouter {
             ?: Regex("^(?:open |show )?(.+) app info$").matchEntire(t)
             ?: return null
         val name = m.groupValues[1].trim()
-        return done("app-info") { Actions.appInfo(it, name) }
+        return Match("app-info", sure = { Actions.hasApp(it, name) }) { Outcome.Done(Actions.appInfo(it, name)) }
     }
 
     private fun settings(t: String): Match? {
-        if (Regex("^(open |show )?settings$").matches(t)) return page("main", Settings.ACTION_SETTINGS)
-        val m = Regex("^(?:open |show |go to )?(?:the )?(.+) settings$").matchEntire(t) ?: return null
+        if (Regex("^(?:open |show )?(?:the )?(?:phone |system |device )?settings$").matches(t)) {
+            return page("main", Settings.ACTION_SETTINGS)
+        }
+        val m = Regex("^(?:open |show |go to |take me to |change )?(?:the |my )?(.+) settings$").matchEntire(t) ?: return null
         val name = m.groupValues[1]
         val action = pages[name] ?: return null
         return page(name, action)
@@ -276,6 +419,7 @@ object CommandRouter {
     private fun openApp(t: String): Match? {
         val m = Regex("^(?:open|launch|start|run) (?:the )?(.+?)(?: app)?$").matchEntire(t) ?: return null
         val name = m.groupValues[1].trim()
-        return done("open-app") { Actions.openApp(it, name) }
+        // "start a timer for five minutes" also matches here: only sure if such an app exists.
+        return Match("open-app", sure = { Actions.hasApp(it, name) }) { Outcome.Done(Actions.openApp(it, name)) }
     }
 }

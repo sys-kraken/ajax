@@ -36,12 +36,14 @@ class MainActivity : Activity(), SpeechInput.Callback {
 
     private val steps: List<Step> by lazy {
         fun has(p: String) = checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
-        val restricted = "If Android says “Restricted setting”: Settings > Apps > Ajax > ⋮ menu > Allow restricted settings, then try again."
+        val restricted = "If Android says “Restricted setting”: Settings > Apps > Ajax > three-dot menu > Allow restricted settings, then try again."
         listOf(
             Step("Microphone", "Needed to hear you.", { has(Manifest.permission.RECORD_AUDIO) },
                 runtime = arrayOf(Manifest.permission.RECORD_AUDIO)),
             Step("Side key (default assistant)",
-                "Pick Ajax under Digital assistant app > Device assistance app. Then holding the side key opens Ajax.",
+                "Pick Ajax under Default apps > Digital assistant app. Then hold the side key (power button). " +
+                    "Samsung: also set Settings > Advanced features > Side button > Press and hold to Digital assistant, not Bixby. " +
+                    "Pixel: Settings > System > Gestures > Press and hold power button > Digital assistant.",
                 { isDefaultAssistant() },
                 intent = { Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS) }),
             Step("Contacts and calling", "Needed for “call …” and “text …”.",
@@ -77,6 +79,8 @@ class MainActivity : Activity(), SpeechInput.Callback {
     private lateinit var talk: Button
     private lateinit var heard: TextView
     private lateinit var result: TextView
+    private lateinit var modelStatus: TextView
+    private lateinit var modelButton: Button
     private val main = Handler(Looper.getMainLooper())
     private var openSettingsMode = false
 
@@ -85,6 +89,7 @@ class MainActivity : Activity(), SpeechInput.Callback {
         speech = SpeechInput(this, this)
         speaker = Speaker(this)
         brain = Brain(this)
+        Actions.watchTorch(this)
         val prefs = getSharedPreferences(Prefs.NAME, MODE_PRIVATE)
 
         val pad = (16 * resources.displayMetrics.density).toInt()
@@ -98,6 +103,9 @@ class MainActivity : Activity(), SpeechInput.Callback {
         }
 
         root.addView(text(28f).apply { this.text = "Ajax" })
+        root.addView(text(12f).apply {
+            this.text = "Version " + packageManager.getPackageInfo(packageName, 0).versionName
+        })
         status = text(15f).also { root.addView(it) }
         hint = text(13f).also { root.addView(it) }
         grant = Button(this).apply { setOnClickListener { onGrantClicked() } }
@@ -120,6 +128,11 @@ class MainActivity : Activity(), SpeechInput.Callback {
             }
         })
 
+        root.addView(text(17f).apply { text = "Smart understanding (optional)" })
+        modelStatus = text(13f).also { root.addView(it) }
+        modelButton = Button(this).apply { setOnClickListener { onModelClicked() } }
+        root.addView(modelButton)
+
         talk = Button(this).apply {
             text = "Hold to talk"
             textSize = 20f
@@ -137,10 +150,12 @@ class MainActivity : Activity(), SpeechInput.Callback {
         result = text(18f).also { root.addView(it) }
         root.addView(
             text(13f).apply {
-                text = "Try: open YouTube • open Wi-Fi settings • turn on Bluetooth • flashlight on • volume up • " +
-                    "vibrate mode • brightness 50 percent • do not disturb on • call <name> • " +
-                    "text <name> saying <message> • set an alarm for 7 30 am • timer 5 minutes • go back • " +
-                    "scroll down • take a screenshot • what's my battery • read my notifications"
+                text = "Try: open YouTube • turn on Bluetooth • flashlight • volume 40 percent • play music • next song • " +
+                    "brightness 50 percent • do not disturb on • auto rotate off • turn off location • " +
+                    "call <name> • text <name> saying <message> • set an alarm for 7 30 am • timer 5 minutes • " +
+                    "take a photo • search for <anything> • navigate to <place> • tap <button> • type <text> • " +
+                    "go back • scroll down • take a screenshot • what's my battery • how much storage do I have • " +
+                    "read my notifications. With smart understanding on, just say it your way."
             },
             LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT),
         )
@@ -148,11 +163,70 @@ class MainActivity : Activity(), SpeechInput.Callback {
             addView(root)
             fitsSystemWindows = true
         })
+        if (savedInstanceState == null) handleAssist(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleAssist(intent)
+    }
+
+    /** Fallback path: some phones send the side key as ACTION_ASSIST to this activity. Listen at once. */
+    private fun handleAssist(i: Intent?) {
+        if (i?.action == Intent.ACTION_ASSIST) main.post { startListening() }
     }
 
     override fun onResume() {
         super.onResume()
+        ModelManager.listener = ::showModel
+        showModel(ModelManager.state(this))
         refreshSteps()
+    }
+
+    private fun onModelClicked() {
+        when (ModelManager.state(this)) {
+            is ModelManager.State.Ready -> ModelManager.delete(this)
+            is ModelManager.State.Downloading -> {}
+            else -> ModelManager.download(this)
+        }
+    }
+
+    private fun showModel(s: ModelManager.State) {
+        val mb = { b: Long -> b / 1_000_000 }
+        if (!LlamaNative.available) {
+            modelStatus.text = "Not supported on this phone (needs a 64-bit ARM processor)."
+            modelButton.visibility = View.GONE
+            return
+        }
+        modelButton.isEnabled = s !is ModelManager.State.Downloading
+        when (s) {
+            is ModelManager.State.Ready -> {
+                modelStatus.text = "On. Ajax understands loose phrasing like “could you flip the torch on”. " +
+                    "Runs fully on the phone."
+                modelButton.text = "Delete model (free ${mb(ModelManager.SIZE_BYTES)} MB)"
+            }
+            is ModelManager.State.Downloading -> {
+                modelStatus.text = "Downloading… ${mb(s.done)} of ${mb(s.total)} MB. You can leave this screen."
+                modelButton.text = "Downloading…"
+            }
+            is ModelManager.State.Failed -> {
+                modelStatus.text = s.message
+                modelButton.text = "Retry download"
+            }
+            is ModelManager.State.Missing -> {
+                modelStatus.text = "Downloads a ${mb(ModelManager.SIZE_BYTES)} MB language model once (use Wi-Fi). " +
+                    "After that it runs offline; your words never leave the phone."
+                modelButton.text = "Download model"
+            }
+        }
+    }
+
+    override fun onPause() {
+        ModelManager.listener = null
+        // Leaving the screen (e.g. a command opened Settings) must not turn into an error.
+        speech.cancel()
+        super.onPause()
     }
 
     override fun onDestroy() {
@@ -169,7 +243,9 @@ class MainActivity : Activity(), SpeechInput.Callback {
     }
 
     private fun refreshSteps() {
-        status.text = steps.joinToString("\n") { (if (it.granted()) "✓ " else "✗ ") + it.label }
+        val engine = Recognizers.delegate(this)?.packageName ?: "none found — install the Google app"
+        status.text = steps.joinToString("\n") { it.label + if (it.granted()) ": ready" else ": needs setup" } +
+            "\nSpeech engine: $engine"
         val next = steps.firstOrNull { !it.granted() }
         grant.visibility = if (next == null) View.GONE else View.VISIBLE
         hint.visibility = if (next == null) View.GONE else View.VISIBLE
@@ -219,7 +295,12 @@ class MainActivity : Activity(), SpeechInput.Callback {
     }
 
     override fun onResults(candidates: List<String>) {
-        val reply = brain.handle(candidates)
+        heard.text = "“${candidates.first()}”"
+        brain.handle(candidates, onThinking = { result.text = "Thinking…" }) { act(it) }
+    }
+
+    private fun act(reply: Brain.Reply) {
+        if (isFinishing || isDestroyed) return
         heard.text = "“${brain.heard}”"
         val after = reply.afterHide
         when {
@@ -240,7 +321,7 @@ class MainActivity : Activity(), SpeechInput.Callback {
     }
 
     private fun show(r: Result) {
-        result.text = (if (r.ok) "✓ " else "✗ ") + r.message
+        result.text = r.message
         speaker.speak(r.message)
     }
 }

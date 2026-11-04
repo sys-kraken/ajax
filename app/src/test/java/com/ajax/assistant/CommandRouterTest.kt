@@ -25,7 +25,9 @@ class CommandRouterTest {
         assertEquals("torch-on", id("could you flip the torch on"))
         assertEquals("torch-on", id("turn on the flashlight"))
         assertEquals("torch-off", id("turn off the torch"))
-        assertEquals("torch-unclear", id("flashlight"))
+        assertEquals("torch-toggle", id("flashlight"))
+        assertEquals("torch-toggle", id("toggle the torch"))
+        assertEquals("torch-unclear", id("is the flashlight bright"))
     }
 
     @Test fun volume() {
@@ -104,5 +106,78 @@ class CommandRouterTest {
     @Test fun unknown() {
         assertNull(id("what's the weather"))
         assertNull(id(""))
+    }
+
+    @Test fun trailingFiller() {
+        assertEquals("info-time", id("What is the time right now?"))
+        assertEquals("info-time", id("what time is it now"))
+        assertEquals("info-battery", id("whats my battery now"))
+        assertEquals("toggle:Wi-Fi:off", id("turn off wifi now"))
+    }
+
+    @Test fun media() {
+        assertEquals("media-playing", id("play music"))
+        assertEquals("media-paused", id("pause"))
+        assertEquals("media-next-track", id("skip this song"))
+        assertEquals("media-previous-track", id("previous track"))
+        assertEquals("volume-level", id("set volume to 40 percent"))
+        assertEquals("volume-level", id("max volume"))
+        assertEquals("volume-invalid", id("volume 400"))
+    }
+
+    @Test fun newToggles() {
+        assertEquals("toggle:Location:off", id("turn off location"))
+        assertEquals("toggle:Battery saver:on", id("turn on battery saver"))
+        assertEquals("toggle:NFC:on", id("nfc on"))
+        assertEquals("rotate-on", id("auto rotate on"))
+        assertEquals("rotate-off", id("lock rotation"))
+    }
+
+    @Test fun webMapsCamera() {
+        assertEquals("search", id("search for pizza near me"))
+        assertEquals("search", id("google how tall is everest"))
+        assertEquals("navigate", id("navigate to the airport"))
+        assertEquals("navigate", id("take me to the beach"))
+        assertEquals("settings:wifi", id("take me to wifi settings"))
+        assertEquals("camera-photo", id("take a selfie"))
+        assertEquals("camera-video", id("record a video"))
+        assertEquals("info-storage", id("how much storage do i have"))
+    }
+
+    @Test fun screenControl() {
+        assertEquals("tap", id("tap send"))
+        assertEquals("tap", id("click on the accept button"))
+        assertEquals("nav-back", id("press back"))
+        assertEquals("type", id("type hello world"))
+        assertEquals("text", id("text mom saying hi"))
+        assertEquals("toggle:Airplane mode:on", id("turn on airplane mode"))
+    }
+
+    @Test fun everydayPhrasing() {
+        assertEquals("torch-off", id("kill the light"))
+        assertEquals("torch-on", id("i need some light"))
+        assertEquals("volume-down", id("make it quieter"))
+        assertEquals("mute", id("turn the sound off"))
+        assertEquals("media-playing", id("put some music on"))
+        assertEquals("media-next-track", id("skip this one"))
+        assertEquals("toggle:Wi-Fi:off", id("disconnect from the wifi"))
+        assertEquals("toggle:Wi-Fi:on", id("turn wifi back on"))
+        assertEquals("toggle:Battery saver:on", id("my battery is dying save power"))
+        assertEquals("info-battery", id("is my phone charged"))
+        assertEquals("info-time", id("do you have the time"))
+        assertEquals("info-date", id("which day is it"))
+        assertEquals("info-storage", id("am i running out of space"))
+        assertEquals("info-notifications", id("any new messages"))
+        assertEquals("rotate-off", id("stop the screen from rotating"))
+        assertEquals("navigate", id("how do i get to the airport"))
+        assertEquals("settings:main", id("open phone settings"))
+    }
+
+    @Test fun lookalikesDoNotMisfire() {
+        assertNull(CommandRouter.route("turn on light mode")?.id?.takeIf { it.startsWith("torch") })
+        assertEquals("toggle:Battery saver:on", id("turn on battery saver"))
+        assertNull(CommandRouter.route("how do i save battery")?.id?.takeIf { it == "info-battery" })
+        assertNull(CommandRouter.route("is it going to rain today")?.id?.takeIf { it == "info-date" })
+        assertEquals("timer", id("set a timer for 5 minutes"))
     }
 }

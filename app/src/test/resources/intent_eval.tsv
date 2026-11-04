@@ -1,0 +1,77 @@
+# request<TAB>accepted answers separated by |   (what a person might say -> what Ajax should do)
+could you flip the torch on	flashlight on
+i need some light	flashlight on
+kill the light	flashlight off
+make the screen brighter	brightness max|brightness 100 percent
+dim the screen all the way	brightness min|brightness 1 percent
+set the brightness to half	brightness 50 percent
+crank it up	volume up|volume max
+i cant hear anything	volume up|volume max|unmute
+make it quieter	volume down
+put the volume at thirty percent	volume 30 percent
+shut up	mute|pause music|silent mode
+turn the sound off	mute|silent mode
+i want my phone to vibrate only	vibrate mode
+no ringing please	silent mode|vibrate mode
+put some music on	play music
+hold the music	pause music
+skip this one	next song
+go back a track	previous song
+disconnect from the wifi	turn off wifi
+get me online with wifi	turn on wifi
+switch the bluetooth on	turn on bluetooth
+stop using bluetooth	turn off bluetooth
+im getting on a plane	turn on airplane mode
+stop using mobile data	turn off mobile data
+dont track my location	turn off location
+my battery is dying save power	turn on battery saver
+stop the screen from rotating	auto rotate off
+let the screen rotate	auto rotate on
+dont disturb me	do not disturb on
+i dont want any interruptions	do not disturb on
+how much battery do i have left	whats my battery
+is my phone charged	whats my battery
+whats the time	what time is it
+what is the time right now	what time is it
+tell me the time please	what time is it
+whats todays date	whats the date
+which day is it	whats the date
+am i running out of space	how much storage do i have
+how much free space is on my phone	how much storage do i have
+any new messages	read my notifications
+what notifications do i have	read my notifications
+wake me up at seven	set an alarm for 7|set an alarm for 7 am|set an alarm for 7 00 am
+set an alarm for six thirty in the morning	set an alarm for 6 30 am
+remind me in five minutes	timer 5 minutes
+start a countdown for 30 seconds	timer 30 seconds
+count down two hours	timer 2 hours
+take a picture	take a photo
+i want to take a selfie	take a photo
+film something	record a video
+grab a screenshot	take a screenshot
+lock it	lock the phone
+show me my recent apps	recent apps
+take me home	go home|navigate to home
+go to the previous screen	go back
+scroll a bit further	scroll down
+open my notifications	open notifications
+launch youtube	open youtube
+i want to watch something on netflix	open netflix
+get me to the camera app	take a photo|open camera
+ring dad	call dad
+phone my sister	call my sister|call sister
+tell john im running late	text john saying im running late
+send a message to anna that i love her	text anna saying i love her|text anna saying that i love her
+look up the weather in london	search for the weather in london|search for weather in london
+how tall is mount everest	search for how tall is mount everest|search for mount everest
+directions to the nearest gas station	navigate to the nearest gas station|navigate to nearest gas station
+how do i get home	navigate to home
+press the ok button	tap ok
+click on accept	tap accept
+change the display settings	display settings
+i want to change my ringtone	sound settings
+where can i manage my apps	apps settings|app settings|applications settings
+open phone settings	open settings
+whats the meaning of life	none
+tell me a joke	none
+order me a pizza	none|search for pizza
