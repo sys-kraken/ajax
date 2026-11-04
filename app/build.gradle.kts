@@ -11,9 +11,9 @@ android {
         applicationId = "com.ajax.assistant"
         minSdk = 26
         targetSdk = 35
-        // CI run numbers only go up, so every build can install over the previous one.
-        versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 7
-        versionName = "0.5.0"
+        // CI run numbers only go up, so every build can install over the previous one (100 clears earlier local builds).
+        versionCode = 100 + (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0)
+        versionName = "0.6.0"
 
         // The on-device model needs a 64-bit ARM CPU; other phones simply don't get Stage 3.
         ndk { abiFilters += "arm64-v8a" }

@@ -8,21 +8,26 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.Button
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
+import com.ajax.assistant.Ui.dp
 
 class MainActivity : Activity(), SpeechInput.Callback {
 
@@ -73,7 +78,10 @@ class MainActivity : Activity(), SpeechInput.Callback {
     private lateinit var speech: SpeechInput
     private lateinit var speaker: Speaker
     private lateinit var brain: Brain
-    private lateinit var status: TextView
+    private lateinit var setupTitle: TextView
+    private lateinit var detailsToggle: TextView
+    private lateinit var stepRows: LinearLayout
+    private lateinit var engine: TextView
     private lateinit var hint: TextView
     private lateinit var grant: Button
     private lateinit var talk: Button
@@ -83,6 +91,7 @@ class MainActivity : Activity(), SpeechInput.Callback {
     private lateinit var modelButton: Button
     private val main = Handler(Looper.getMainLooper())
     private var openSettingsMode = false
+    private var showDetails = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -92,78 +101,101 @@ class MainActivity : Activity(), SpeechInput.Callback {
         Actions.watchTorch(this)
         val prefs = getSharedPreferences(Prefs.NAME, MODE_PRIVATE)
 
-        val pad = (16 * resources.displayMetrics.density).toInt()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(pad, pad, pad, pad)
-        }
-        fun text(size: Float) = TextView(this).apply {
-            textSize = size
-            setPadding(0, pad / 2, 0, pad / 2)
+            setPadding(dp(16), dp(16), dp(16), dp(24))
         }
 
-        root.addView(text(28f).apply { this.text = "Ajax" })
-        root.addView(text(12f).apply {
-            this.text = "Version " + packageManager.getPackageInfo(packageName, 0).versionName
-        })
-        status = text(15f).also { root.addView(it) }
-        hint = text(13f).also { root.addView(it) }
-        grant = Button(this).apply { setOnClickListener { onGrantClicked() } }
-        root.addView(grant)
-        root.addView(Switch(this).apply {
-            text = "Speak replies"
-            isChecked = prefs.getBoolean(Prefs.SPEAK, true)
-            setOnCheckedChangeListener { _, on -> prefs.edit().putBoolean(Prefs.SPEAK, on).apply() }
-        })
-        root.addView(Switch(this).apply {
-            text = "Allow online speech recognition (audio may go to Google)"
-            isChecked = prefs.getBoolean(Prefs.ONLINE, false)
-            setOnCheckedChangeListener { _, on -> prefs.edit().putBoolean(Prefs.ONLINE, on).apply() }
-        })
-        root.addView(Button(this).apply {
-            text = "Open voice settings"
-            setOnClickListener {
-                try { startActivity(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS)) }
-                catch (e: ActivityNotFoundException) { show(Result(false, "This phone has no voice settings page.")) }
-            }
-        })
+        root.addView(LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            addView(ImageView(this@MainActivity).apply {
+                setImageResource(R.drawable.ajax_logo)
+                adjustViewBounds = true
+                contentDescription = "Ajax"
+            }, LinearLayout.LayoutParams(dp(92), WRAP_CONTENT))
+            addView(View(this@MainActivity), LinearLayout.LayoutParams(0, 0, 1f))
+            addView(Ui.text(this@MainActivity, 12f, Ui.MUTED).apply {
+                text = "Version " + packageManager.getPackageInfo(packageName, 0).versionName
+            })
+        }, Ui.below(this, 16))
 
-        root.addView(text(17f).apply { text = "Smart understanding (optional)" })
-        modelStatus = text(13f).also { root.addView(it) }
-        modelButton = Button(this).apply { setOnClickListener { onModelClicked() } }
-        root.addView(modelButton)
-
-        talk = Button(this).apply {
-            text = "Hold to talk"
+        talk = Ui.button(this, TALK_LABEL, primary = true).apply {
             textSize = 20f
+            typeface = Typeface.DEFAULT_BOLD
             setOnTouchListener { v, e ->
                 when (e.action) {
-                    MotionEvent.ACTION_DOWN -> { startListening(); true }
-                    MotionEvent.ACTION_UP -> { v.performClick(); speech.stopListening(); true }
-                    MotionEvent.ACTION_CANCEL -> { speech.stopListening(); true }
+                    MotionEvent.ACTION_DOWN -> { v.isPressed = true; text = "Listening"; startListening(); true }
+                    MotionEvent.ACTION_UP -> { v.isPressed = false; text = TALK_LABEL; v.performClick(); speech.stopListening(); true }
+                    MotionEvent.ACTION_CANCEL -> { v.isPressed = false; text = TALK_LABEL; speech.stopListening(); true }
                     else -> false
                 }
             }
         }
-        root.addView(talk, LinearLayout.LayoutParams(MATCH_PARENT, 4 * pad))
-        heard = text(16f).also { root.addView(it) }
-        result = text(18f).also { root.addView(it) }
-        root.addView(
-            text(13f).apply {
-                text = "Try: open YouTube • turn on Bluetooth • flashlight • volume 40 percent • play music • next song • " +
-                    "brightness 50 percent • do not disturb on • auto rotate off • turn off location • " +
-                    "call <name> • text <name> saying <message> • set an alarm for 7 30 am • timer 5 minutes • " +
-                    "take a photo • search for <anything> • navigate to <place> • tap <button> • type <text> • " +
-                    "draft a message to <name> saying <message> • go back • scroll down • take a screenshot • " +
-                    "turn off the screen • restart the phone • what's my battery • how much storage do I have • " +
-                    "read my notifications. With smart understanding on, just say it your way. " +
-                    "After the side key, Ajax keeps listening for your next command; say “stop” or “thanks” to finish."
-            },
-            LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT),
-        )
+        root.addView(talk, LinearLayout.LayoutParams(MATCH_PARENT, dp(84)).apply { bottomMargin = dp(12) })
+
+        root.addView(Ui.card(this).apply {
+            heard = Ui.text(this@MainActivity, 14f, Ui.MUTED).also { addView(it) }
+            result = Ui.text(this@MainActivity, 18f).apply {
+                hint = "Hold the button or the side key, then speak. After the side key, Ajax keeps listening; say stop to finish."
+                setHintTextColor(Ui.MUTED)
+            }.also { addView(it) }
+        }, Ui.below(this, 12))
+
+        root.addView(Ui.card(this).apply {
+            val row = LinearLayout(this@MainActivity).apply { gravity = Gravity.CENTER_VERTICAL }
+            setupTitle = Ui.text(this@MainActivity, 17f, bold = true).also {
+                row.addView(it, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+            }
+            detailsToggle = Ui.text(this@MainActivity, 14f, Ui.TEXT, bold = true).apply {
+                setPadding(dp(8), dp(8), 0, dp(8))
+                setOnClickListener { showDetails = !showDetails; refreshSteps() }
+            }.also { row.addView(it) }
+            addView(row)
+            stepRows = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL }.also { addView(it) }
+            hint = Ui.text(this@MainActivity, 13f, Ui.MUTED).apply { setPadding(0, dp(8), 0, dp(8)) }.also { addView(it) }
+            grant = Ui.button(this@MainActivity, "", primary = true).apply { setOnClickListener { onGrantClicked() } }.also { addView(it) }
+        }, Ui.below(this, 12))
+
+        root.addView(Ui.card(this).apply {
+            addView(Ui.text(this@MainActivity, 17f, bold = true).apply { text = "Smart understanding" })
+            modelStatus = Ui.text(this@MainActivity, 13f, Ui.MUTED).apply { setPadding(0, dp(6), 0, dp(10)) }.also { addView(it) }
+            modelButton = Ui.button(this@MainActivity, "", primary = false).apply { setOnClickListener { onModelClicked() } }.also { addView(it) }
+        }, Ui.below(this, 12))
+
+        root.addView(Ui.card(this).apply {
+            addView(Ui.text(this@MainActivity, 17f, bold = true).apply { text = "Preferences" })
+            fun option(label: String, key: String, default: Boolean) = addView(Switch(this@MainActivity).apply {
+                text = label
+                textSize = 14f
+                setTextColor(Ui.TEXT)
+                setPadding(0, dp(10), 0, dp(10))
+                isChecked = prefs.getBoolean(key, default)
+                setOnCheckedChangeListener { _, on -> prefs.edit().putBoolean(key, on).apply() }
+            })
+            option("Speak replies", Prefs.SPEAK, true)
+            option("Allow online speech recognition (audio may go to Google)", Prefs.ONLINE, false)
+            engine = Ui.text(this@MainActivity, 12f, Ui.MUTED).apply { setPadding(0, dp(4), 0, dp(10)) }.also { addView(it) }
+            addView(Ui.button(this@MainActivity, "Open voice settings", primary = false).apply {
+                setOnClickListener {
+                    try { startActivity(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS)) }
+                    catch (e: ActivityNotFoundException) { show(Result(false, "This phone has no voice settings page.")) }
+                }
+            })
+        }, Ui.below(this, 12))
+
         setContentView(ScrollView(this).apply {
+            setBackgroundColor(Ui.BACKGROUND)
             addView(root)
-            fitsSystemWindows = true
+            clipToPadding = false
+            // Take focus first, or the rebuilt setup rows make the page open scrolled down.
+            isFocusableInTouchMode = true
+            descendantFocusability = ViewGroup.FOCUS_BEFORE_DESCENDANTS
+            // Android 15 draws behind the system bars: keep the content clear of them.
+            @Suppress("DEPRECATION")
+            setOnApplyWindowInsetsListener { v, i ->
+                v.setPadding(i.systemWindowInsetLeft, i.systemWindowInsetTop, i.systemWindowInsetRight, i.systemWindowInsetBottom)
+                i
+            }
         })
         if (savedInstanceState == null) handleAssist(intent)
     }
@@ -245,10 +277,25 @@ class MainActivity : Activity(), SpeechInput.Callback {
     }
 
     private fun refreshSteps() {
-        val engine = Recognizers.delegate(this)?.packageName ?: "none found — install the Google app"
-        status.text = steps.joinToString("\n") { it.label + if (it.granted()) ": ready" else ": needs setup" } +
-            "\nSpeech engine: $engine"
+        engine.text = "Speech engine: " + (Recognizers.delegate(this)?.packageName ?: "none found, install the Google app")
+        val ready = steps.count { it.granted() }
         val next = steps.firstOrNull { !it.granted() }
+        setupTitle.text = if (next == null) "Setup complete" else "Setup: $ready of ${steps.size} ready"
+        val expanded = next != null || showDetails
+        detailsToggle.visibility = if (next == null) View.VISIBLE else View.GONE
+        detailsToggle.text = if (showDetails) "Hide" else "Show"
+        stepRows.visibility = if (expanded) View.VISIBLE else View.GONE
+        stepRows.removeAllViews()
+        if (expanded) steps.forEach { step ->
+            val ok = step.granted()
+            stepRows.addView(LinearLayout(this).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(8), 0, dp(8))
+                addView(Ui.text(this@MainActivity, 14f).apply { text = step.label }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+                addView(Ui.pill(this@MainActivity, if (ok) "Ready" else "Set up", if (ok) Ui.GOOD else Ui.ATTENTION))
+                if (!ok) setOnClickListener { open(step) }
+            })
+        }
         grant.visibility = if (next == null) View.GONE else View.VISIBLE
         hint.visibility = if (next == null) View.GONE else View.VISIBLE
         if (next == null) openSettingsMode = false
@@ -264,10 +311,13 @@ class MainActivity : Activity(), SpeechInput.Callback {
             )
             return
         }
-        val next = steps.firstOrNull { !it.granted() } ?: return
-        next.runtime?.let { requestPermissions(it, 1); return }
+        open(steps.firstOrNull { !it.granted() } ?: return)
+    }
+
+    private fun open(step: Step) {
+        step.runtime?.let { requestPermissions(it, 1); return }
         try {
-            startActivity(next.intent!!())
+            startActivity(step.intent!!())
         } catch (e: ActivityNotFoundException) {
             show(Result(false, "This phone has no settings page for that. Open it from Settings by hand."))
         }
@@ -325,5 +375,9 @@ class MainActivity : Activity(), SpeechInput.Callback {
     private fun show(r: Result) {
         result.text = r.message
         speaker.speak(r.message)
+    }
+
+    private companion object {
+        const val TALK_LABEL = "Hold to talk"
     }
 }

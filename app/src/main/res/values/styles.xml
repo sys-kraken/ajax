@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="AjaxTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:colorAccent">#F5F5F7</item>
+        <item name="android:colorPrimary">#151517</item>
+        <item name="android:colorPrimaryDark">#0A0A0B</item>
+        <item name="android:windowBackground">#0A0A0B</item>
+        <item name="android:statusBarColor">#0A0A0B</item>
+        <item name="android:navigationBarColor">#0A0A0B</item>
+    </style>
+</resources>

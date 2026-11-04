@@ -3,6 +3,7 @@ package com.ajax.assistant
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
+import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -113,6 +114,70 @@ class AjaxAccessibilityService : AccessibilityService() {
         }
         return if (field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) Result(true, "Typed")
         else Result(false, "That text box won't accept typing.")
+    }
+
+    /**
+     * Opens the system power menu and presses [button]. One UI then animates the same button to the
+     * middle of the screen and wants a second press, which is ignored during the animation: wait until
+     * it has moved and stopped. Reports failure itself.
+     */
+    fun pressPowerMenu(button: String): Result {
+        handler.removeCallbacksAndMessages(null)
+        if (!performGlobalAction(GLOBAL_ACTION_POWER_DIALOG)) return Result(false, "Android wouldn't open the power menu.")
+        pressInMenu(button, firstAt = null, lastAt = null, confirms = 0, tries = 0)
+        return Result(true, "")
+    }
+
+    private fun pressInMenu(button: String, firstAt: Rect?, lastAt: Rect?, confirms: Int, tries: Int) {
+        val target = findMenuButton(button)
+        val at = target?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
+        var first = firstAt
+        var count = confirms
+        var pressed = false
+        if (target != null) {
+            if (first == null) {
+                if (target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) { first = at; pressed = true }
+            } else if (at == lastAt && (at != first || tries >= 12)) {
+                // Still there after a press: alternate an accessibility click with a real touch.
+                if (count % 2 == 0) target.performAction(AccessibilityNodeInfo.ACTION_CLICK) else touch(at!!)
+                count++
+                pressed = true
+            }
+        }
+        when {
+            first == null && tries >= 15 -> say(Result(false, "I opened the power menu but couldn't press $button. Tap it yourself."))
+            count >= 4 || tries >= 40 -> say(Result(false, "I pressed $button but the phone didn't react. Tap it yourself."))
+            else -> handler.postDelayed({ pressInMenu(button, first, at, count, tries + 1) }, if (pressed) 1000L else 250L)
+        }
+    }
+
+    private fun touch(at: Rect) {
+        val path = Path().apply { moveTo(at.exactCenterX(), at.exactCenterY()) }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 60))
+            .build()
+        dispatchGesture(gesture, null, null)
+    }
+
+    /**
+     * The control labelled [button], in any window but Ajax's own. One UI's power menu keeps the label
+     * in a separate text view: what can be clicked is an image described as "Restart,".
+     */
+    private fun findMenuButton(button: String): AccessibilityNodeInfo? {
+        val roots = (windows.mapNotNull { it.root } + listOfNotNull(rootInActiveWindow))
+            .filter { it.packageName?.toString() != packageName }
+        return roots.firstNotNullOfOrNull { clickableLabelled(it, button) }
+    }
+
+    private fun clickableLabelled(n: AccessibilityNodeInfo, label: String): AccessibilityNodeInfo? {
+        if (n.isClickable && n.isVisibleToUser && listOfNotNull(n.text, n.contentDescription).any {
+                it.toString().trim().trimEnd(',', '.').equals(label, ignoreCase = true)
+            }
+        ) return n
+        for (i in 0 until n.childCount) {
+            n.getChild(i)?.let { c -> clickableLabelled(c, label)?.let { return it } }
+        }
+        return null
     }
 
     /**

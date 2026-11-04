@@ -229,7 +229,7 @@ object Actions {
         if (message.length > 300) return Outcome.Done(Result(false, "That message is too long to send by voice."))
         val c = findContact(ctx, name)
         if (c.error != null) return Outcome.Done(Result(false, c.error))
-        return Outcome.Ask("Send “$message” to ${c.name}?") { sendText(it, c.name.orEmpty(), c.number.orEmpty(), message) }
+        return Outcome.Ask("Send “$message” to ${c.name}?") { Outcome.Done(sendText(it, c.name.orEmpty(), c.number.orEmpty(), message)) }
     }
 
     /** Opens the messaging app ready to send. Ajax sends nothing itself. */

@@ -46,7 +46,7 @@ class Brain(private val ctx: Context) {
             val words = candidates.map { CommandRouter.normalize(it) }
             done(
                 when {
-                    words.any { it in yes } -> { pending = null; Reply(p.onYes(ctx), ends = p.endsConversation) }
+                    words.any { it in yes } -> { pending = null; settle(p.onYes(ctx), p.endsConversation) }
                     words.any { it in no } -> { pending = null; Reply(Result(true, "Cancelled."), ends = true) }
                     else -> Reply(Result(true, "Say yes or no."), listenAgain = true)
                 },
@@ -98,15 +98,17 @@ class Brain(private val ctx: Context) {
         // A guessed phone call is too costly to get wrong: confirm it first.
         if (fromModel && m.id == "call") {
             val ask = Outcome.Ask("${phrase.replaceFirstChar { it.uppercase() }}?", endsConversation = true) { c ->
-                (m.start(c) as? Outcome.Done)?.result ?: Result(false, "Couldn't place the call.")
+                m.start(c)
             }
             pending = ask
             return Reply(Result(true, ask.prompt), listenAgain = true)
         }
-        return when (val o = m.start(ctx)) {
-            is Outcome.Done -> Reply(o.result, ends = m.endsConversation && o.result.ok)
-            is Outcome.Ask -> { pending = o; Reply(Result(true, o.prompt), listenAgain = true) }
-            is Outcome.AfterHide -> Reply(Result(true, o.label), afterHide = { o.run(ctx) }, ends = m.endsConversation)
-        }
+        return settle(m.start(ctx), m.endsConversation)
+    }
+
+    private fun settle(o: Outcome, ends: Boolean): Reply = when (o) {
+        is Outcome.Done -> Reply(o.result, ends = ends && o.result.ok)
+        is Outcome.Ask -> { pending = o; Reply(Result(true, o.prompt), listenAgain = true) }
+        is Outcome.AfterHide -> Reply(Result(true, o.label), afterHide = { o.run(ctx) }, ends = ends)
     }
 }

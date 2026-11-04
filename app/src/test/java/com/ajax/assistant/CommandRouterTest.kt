@@ -181,6 +181,7 @@ class CommandRouterTest {
         assertEquals("nav-power-off", id("turn off the phone"))
         assertEquals("nav-power-off", id("shut down"))
         assertEquals("nav-lock", id("Turn off the screen"))
+        assertFalse(CommandRouter.route("restart the phone")!!.hintOnly)
         assertEquals("nav-lock", id("turn the display off"))
         assertEquals("settings:screen", id("open screen settings"))
     }

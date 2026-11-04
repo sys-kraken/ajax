@@ -326,6 +326,14 @@ object CommandRouter {
         else Outcome.AfterHide(label) { AjaxAccessibilityService.instance?.let(f) ?: needsAccessibility }
     }
 
+    /** Android lets no ordinary app restart the phone, so Ajax presses the system power menu, after a yes. */
+    private fun powerMenu(id: String, question: String, label: String, button: String) = Match(id) {
+        if (AjaxAccessibilityService.instance == null) Outcome.Done(needsAccessibility)
+        else Outcome.Ask(question, endsConversation = true) {
+            Outcome.AfterHide(label) { AjaxAccessibilityService.instance?.pressPowerMenu(button) ?: needsAccessibility }
+        }
+    }
+
     private fun nav(t: String): Match? = when {
         Regex("^(?:go |press )?back$").matches(t) ->
             nav("nav-back", "Going back") { it.global(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK, "Back") }
@@ -342,12 +350,11 @@ object CommandRouter {
         Regex("^lock (?:the |my )?(?:phone|screen|device|it)$|^lock it$|^(?:turn|switch) off (?:the |my )?(?:screen|display)$|" +
             "^(?:turn|switch) (?:the |my )?(?:screen|display) off$|^screen off$|^(?:put (?:the |my )?(?:phone|screen) to )?sleep$").matches(t) ->
             nav("nav-lock", "Locking the phone") { it.globalApi28(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN, "Locked") }
-        // Android lets no ordinary app restart or power off the phone: open the system's own menu.
         Regex("^(?:restart|reboot)(?: (?:the |my )?(?:phone|device)| it)?$").matches(t) ->
-            nav("nav-restart", "Opening the power menu") { it.global(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_POWER_DIALOG, "Android needs you to tap Restart") }
+            powerMenu("nav-restart", "Restart the phone?", "Restarting", "Restart")
         Regex("^(?:power off|shut down|shutdown)(?: (?:the |my )?(?:phone|device))?$|^(?:power menu|power options)$|" +
             "^(?:turn|switch) off (?:the |my )?(?:phone|device)$|^(?:turn|switch) (?:the |my )?(?:phone|device) off$").matches(t) ->
-            nav("nav-power-off", "Opening the power menu") { it.global(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_POWER_DIALOG, "Android needs you to tap Power off") }
+            powerMenu("nav-power-off", "Power off the phone?", "Powering off", "Power off")
         Regex("^scroll (?:a bit |a little )?(up|down|further|more)$").matches(t) -> {
             val down = !t.endsWith("up")
             nav("nav-scroll-${if (down) "down" else "up"}", "Scrolling") { it.scroll(down) }
