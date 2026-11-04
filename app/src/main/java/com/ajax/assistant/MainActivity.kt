@@ -154,8 +154,10 @@ class MainActivity : Activity(), SpeechInput.Callback {
                     "brightness 50 percent • do not disturb on • auto rotate off • turn off location • " +
                     "call <name> • text <name> saying <message> • set an alarm for 7 30 am • timer 5 minutes • " +
                     "take a photo • search for <anything> • navigate to <place> • tap <button> • type <text> • " +
-                    "go back • scroll down • take a screenshot • what's my battery • how much storage do I have • " +
-                    "read my notifications. With smart understanding on, just say it your way."
+                    "draft a message to <name> saying <message> • go back • scroll down • take a screenshot • " +
+                    "turn off the screen • restart the phone • what's my battery • how much storage do I have • " +
+                    "read my notifications. With smart understanding on, just say it your way. " +
+                    "After the side key, Ajax keeps listening for your next command; say “stop” or “thanks” to finish."
             },
             LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT),
         )

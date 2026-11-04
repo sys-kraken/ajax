@@ -12,7 +12,20 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
+      # A stable signing key, so a new build installs over the old one and keeps its data (the model).
+      - name: Restore signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.AJAX_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/ajax.keystore"
+            echo "AJAX_KEYSTORE=$RUNNER_TEMP/ajax.keystore" >> "$GITHUB_ENV"
+          else
+            echo "::warning::AJAX_KEYSTORE_B64 is not set: this APK has a throwaway key and won't install over other builds."
+          fi
       - run: ./gradlew --no-daemon testDebugUnitTest assembleDebug
+        env:
+          AJAX_KEYSTORE_PASSWORD: ${{ secrets.AJAX_KEYSTORE_PASSWORD }}
       - uses: actions/upload-artifact@v4
         with:
           name: ajax-debug-apk

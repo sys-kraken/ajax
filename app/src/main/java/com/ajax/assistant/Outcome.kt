@@ -8,7 +8,7 @@ sealed class Outcome {
     class Done(val result: Result) : Outcome()
 
     /** Risky action (sends, deletes, spends): ask yes/no first. */
-    class Ask(val prompt: String, val onYes: (Context) -> Result) : Outcome()
+    class Ask(val prompt: String, val endsConversation: Boolean = false, val onYes: (Context) -> Result) : Outcome()
 
     /** Must run after the assistant overlay is gone (Accessibility acts on the window underneath). */
     class AfterHide(val label: String, val run: (Context) -> Result) : Outcome()

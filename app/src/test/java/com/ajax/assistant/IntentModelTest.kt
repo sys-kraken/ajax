@@ -1,6 +1,7 @@
 package com.ajax.assistant
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -16,15 +17,29 @@ class IntentModelTest {
     @Test fun everySlotShapeRoutes() {
         listOf(
             "brightness 40 percent", "set an alarm for 7 30 am", "set an alarm for 6", "timer 10 minutes",
-            "open spotify", "app info for spotify", "call mom", "text mom saying on my way",
+            "open spotify", "app info for spotify", "call mom", "text mom saying on my way", "draft a message to mom saying hi",
             "volume 30 percent", "search for pizza near me", "navigate to the airport", "tap ok", "type hello",
         ).forEach { assertNotNull("router rejects '$it'", CommandRouter.route(it)) }
     }
 
-    @Test fun grammarListsEveryFixedCommand() {
-        val g = c.grammar
-        for (p in c.fixed) assertTrue(p, g.contains("\"$p\""))
-        assertTrue(g.startsWith("root ::= "))
+    @Test fun everyFixedCommandIsOfferedWhenSaidOutright() {
+        for (p in c.fixed) assertTrue(p, c.grammar(p).contains("\"$p\""))
+        assertTrue(c.grammar("anything").startsWith("root ::= "))
+    }
+
+    @Test fun grammarOffersOnlyCommandsTheRequestHintsAt() {
+        val restart = c.grammar("restart the phone")
+        assertTrue(restart.contains("\"restart the phone\""))
+        assertFalse(restart.contains("\"turn on battery saver\""))
+        val screen = c.grammar("turn the display all the way down")
+        assertFalse(screen.contains("\"turn off mobile data\""))
+        assertTrue(screen.contains("\"brightness min\""))
+        val draft = c.grammar("write a note to franklin saying hi")
+        assertFalse(draft.contains("\"whats the date\""))
+        assertTrue(draft.contains("\"draft a message to \""))
+        val joke = c.grammar("tell me a joke")
+        assertFalse(joke.contains("\"what time is it\""))
+        assertTrue(joke.contains("\"none\""))
     }
 
     @Test fun acceptsValidOutput() {

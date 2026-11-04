@@ -8,7 +8,8 @@ import android.content.Context
  * Safety by construction: the model never acts. Its output is constrained by a grammar to exactly
  * one canonical command phrase from [Catalog] (or "none"), and that phrase then goes through the
  * normal regex [CommandRouter] like anything the user said. Words it fills in (names, places,
- * labels, text) must be words the user actually said.
+ * labels, text) must be words the user actually said, and the grammar only offers commands the
+ * request gives some clue for, so it can't answer "restart the phone" with "turn on battery saver".
  */
 object IntentModel {
 
@@ -18,7 +19,7 @@ object IntentModel {
     fun interpret(ctx: Context, heard: String, done: (String?) -> Unit) {
         val request = CommandRouter.normalize(heard)
         if (request.isEmpty()) { done(null); return }
-        ModelManager.complete(ctx, Catalog.prefix, Catalog.suffix(request), Catalog.grammar, maxTokens = 48) { out ->
+        ModelManager.complete(ctx, Catalog.prefix, Catalog.suffix(request), Catalog.grammar(request), maxTokens = 48) { out ->
             done(out?.let { Catalog.accept(it, request) })
         }
     }
@@ -39,7 +40,7 @@ object IntentModel {
                 "brightness max", "brightness min",
                 "do not disturb on", "do not disturb off",
                 "go back", "go home", "recent apps", "open notifications", "quick settings",
-                "take a screenshot", "lock the phone", "scroll up", "scroll down",
+                "take a screenshot", "lock the phone", "restart the phone", "turn off the phone", "scroll up", "scroll down",
                 "take a photo", "record a video",
                 "whats my battery", "what time is it", "whats the date", "read my notifications",
                 "how much storage do i have",
@@ -57,6 +58,7 @@ object IntentModel {
             "app info for <app>",
             "call <contact>",
             "text <contact> saying <message>",
+            "draft a message to <contact> saying <message>",
             "search for <words>",
             "navigate to <place>",
             "tap <button label on screen>",
@@ -101,25 +103,80 @@ object IntentModel {
 
         fun suffix(request: String) = "$request<|im_end|>\n<|im_start|>assistant\n"
 
-        /** GBNF: the model can only emit one of these shapes. */
-        val grammar: String by lazy {
-            buildString {
-                val alts = fixed.map { "\"$it\"" } + listOf(
-                    "\"brightness \" num \" percent\"",
-                    "\"volume \" num \" percent\"",
-                    "\"set an alarm for \" hour (\" \" minute)? (\" am\" | \" pm\")?",
-                    "\"timer \" num \" \" (\"seconds\" | \"minutes\" | \"hours\")",
-                    "\"open \" words",
-                    "\"app info for \" words",
-                    "\"call \" words",
-                    "\"text \" words \" saying \" text",
-                    "\"search for \" words",
-                    "\"navigate to \" words",
-                    "\"tap \" words",
-                    "\"type \" text",
-                    "\"none\"",
-                )
-                append("root ::= ").append(alts.joinToString(" | ")).append('\n')
+        /**
+         * Words a request must contain (as word starts) before a fixed command is offered to the model:
+         * the first entry whose key is in the command applies. Generous on purpose; it only has to
+         * rule out commands that have nothing to do with the request.
+         */
+        private val fixedClues = listOf(
+            "flashlight" to "flash|torch|light|lamp|dark|see",
+            "quick settings" to "quick|settings|panel|toggles",
+            "open notifications" to "notif|alert|came in|messages",
+            "read my notifications" to "notif|alert|came in|messages|read",
+            " settings" to "setting|change|manage|configure|adjust",
+            "volume" to "volume|sound|loud|quiet|soft|hear|audio|crank",
+            "mute" to "mute|unmute|quiet|silen|shut|sound",
+            "music" to "music|song|track|tune|play|album|pause|hold|resume|stop|audio",
+            " song" to "song|track|tune|skip|next|previous|last|back",
+            "vibrate" to "vibrat|buzz",
+            "silent" to "silen|quiet|ring|mute",
+            "sound mode" to "sound|ring|normal|unsilence",
+            "wifi" to "wifi|wlan|internet|online|network|connect",
+            "bluetooth" to "bluetooth|headphone|earbud|headset|airpod|speaker|pair",
+            "mobile data" to "data|mobile|cellular|internet|online|network|4g|5g|lte",
+            "airplane" to "airplane|plane|flight|fly",
+            "location" to "location|gps|track",
+            "battery saver" to "battery|power|saver|saving|juice|dying|charge",
+            "nfc" to "nfc|contactless",
+            "rotate" to "rotat|sideways|landscape|portrait",
+            "brightness" to "bright|dim|dark|screen|see|glare|blind|display",
+            "do not disturb" to "disturb|dnd|interrupt|focus|bother|peace",
+            "go back" to "back|previous|return",
+            "go home" to "home|launcher|main screen",
+            "recent apps" to "recent|open apps|switcher|multitask",
+            "scroll" to "scroll|down|up|further|page|more",
+            "screenshot" to "screenshot|screen|capture|grab",
+            "lock the phone" to "lock|sleep",
+            "restart" to "restart|reboot",
+            "turn off the phone" to "power|shut|turn off|switch off",
+            "take a photo" to "photo|picture|pic|selfie|camera|snap|shot",
+            "record a video" to "video|record|film|clip|movie",
+            "battery" to "battery|charge|juice|power",
+            "what time" to "time|clock|hour|late|oclock",
+            "whats the date" to "date|day|today|month|year",
+            "storage" to "storage|space|memory|room|full",
+        ).map { (key, clue) -> key to Regex("\\b(?:$clue)") }
+
+        private class Slot(val rule: String, clue: String?) {
+            val clue = clue?.let { Regex("\\b(?:$it)") }
+        }
+
+        private val slotRules = listOf(
+            Slot("\"brightness \" num \" percent\"", "bright|dim|screen|display"),
+            Slot("\"volume \" num \" percent\"", "volume|sound|loud|quiet|audio"),
+            Slot("\"set an alarm for \" hour (\" \" minute)? (\" am\" | \" pm\")?", "alarm|wake|get up|morning|clock"),
+            Slot("\"timer \" num \" \" (\"seconds\" | \"minutes\" | \"hours\")", "timer|remind|countdown|count down|second|minute|hour"),
+            Slot("\"open \" words", "open|launch|start|fire|run|watch|use|show|get me|go to|app|play|load"),
+            Slot("\"app info for \" words", "info|details|about"),
+            Slot("\"call \" words", "call|ring|phone|dial"),
+            Slot("\"text \" words \" saying \" text", "text|message|sms|send|tell|say"),
+            Slot("\"draft a message to \" words \" saying \" text", "draft|write|compose|prepare"),
+            Slot("\"search for \" words", null),
+            Slot("\"navigate to \" words", "navigat|direction|get to|get home|take me|drive|route|map|way|go to"),
+            Slot("\"tap \" words", "tap|click|press|hit|select|push|button"),
+            Slot("\"type \" text", "type|write|enter|input"),
+            Slot("\"none\"", null),
+        )
+
+        /** GBNF for this [request]: the model can only emit one of these shapes. */
+        fun grammar(request: String): String {
+            val fixedAlts = fixed.filter { phrase ->
+                val clue = fixedClues.firstOrNull { it.first in phrase }?.second
+                clue == null || clue.containsMatchIn(request)
+            }.map { "\"$it\"" }
+            val slotAlts = slotRules.filter { it.clue == null || it.clue.containsMatchIn(request) }.map { it.rule }
+            return buildString {
+                append("root ::= ").append((fixedAlts + slotAlts).joinToString(" | ")).append('\n')
                 append("num ::= [0-9] [0-9]? [0-9]?\n")
                 append("hour ::= [0-9] [0-9]?\n")
                 append("minute ::= [0-9] [0-9]\n")
@@ -131,7 +188,7 @@ object IntentModel {
         /** Slots whose words must come from the request (group 1, and group 2 if present). */
         private val copied = listOf(
             Regex("^open (.+)$"), Regex("^app info for (.+)$"), Regex("^call (.+)$"),
-            Regex("^text (.+?) saying (.+)$"), Regex("^search for (.+)$"), Regex("^navigate to (.+)$"),
+            Regex("^text (.+?) saying (.+)$"), Regex("^draft a message to (.+?) saying (.+)$"), Regex("^search for (.+)$"), Regex("^navigate to (.+)$"),
             Regex("^tap (.+)$"), Regex("^type (.+)$"),
         )
 

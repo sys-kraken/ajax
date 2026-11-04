@@ -19,6 +19,15 @@ object CommandRouter {
         /** Only a hint/error; never the real answer (lets tests classify matches without a phone). */
         val hintOnly: Boolean = false,
         val start: (Context) -> Outcome,
+    ) {
+        /** The user's attention moves elsewhere (another app, a call, music): stop listening afterwards. */
+        val endsConversation: Boolean get() = id in handOffs || id.startsWith("settings:")
+    }
+
+    private val handOffs = setOf(
+        "open-app", "app-info", "camera-photo", "camera-video", "search", "navigate", "call", "draft",
+        "media-playing", "media-next-track", "media-previous-track",
+        "nav-recents", "nav-notifications", "nav-quick-settings", "nav-lock", "nav-restart", "nav-power-off",
     )
 
     private val needsAccessibility =
@@ -58,11 +67,31 @@ object CommandRouter {
         return s
     }
 
+    private val smallNumbers = listOf(
+        "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
+        "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen",
+    )
+    private val tensNumbers = listOf("twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
+
+    /**
+     * Number words to digits, for commands that take a number ("brightness zero percent"). Not part of
+     * [normalize]: names and search words must keep their wording ("search for one direction").
+     */
+    private fun digits(t: String): String {
+        val units = smallNumbers.subList(1, 10).joinToString("|")
+        var s = Regex("\\b(?:a|one) hundred\\b").replace(t, "100")
+        s = Regex("\\b(${tensNumbers.joinToString("|")})(?: ($units))?\\b").replace(s) { m ->
+            val unit = smallNumbers.indexOf(m.groupValues[2]).coerceAtLeast(0)
+            ((tensNumbers.indexOf(m.groupValues[1]) + 2) * 10 + unit).toString()
+        }
+        return Regex("\\b(${smallNumbers.joinToString("|")})\\b").replace(s) { smallNumbers.indexOf(it.value).toString() }
+    }
+
     fun route(raw: String): Match? {
         val t = normalize(raw)
         if (t.isEmpty()) return null
-        return volume(t) ?: media(t) ?: ringer(t) ?: torch(t) ?: rotate(t) ?: toggle(t) ?: brightness(t) ?: dnd(t)
-            ?: nav(t) ?: sms(raw) ?: screen(t) ?: info(t) ?: alarm(t) ?: timer(t) ?: camera(t) ?: search(t)
+        return sms(raw) ?: draft(raw) ?: volume(t) ?: media(t) ?: ringer(t) ?: torch(t) ?: rotate(t) ?: toggle(t) ?: brightness(t) ?: dnd(t)
+            ?: nav(t) ?: screen(t) ?: info(t) ?: alarm(t) ?: timer(t) ?: camera(t) ?: search(t)
             ?: navigate(t) ?: appInfo(t) ?: settings(t) ?: call(t) ?: openApp(t)
     }
 
@@ -89,7 +118,7 @@ object CommandRouter {
             done("unmute") { Actions.volume(it, AudioManager.ADJUST_UNMUTE, "Unmuted") }
         Regex("^(?:volume (?:max|maximum|full)|max(?:imum)? volume|full volume)$").matches(t) ->
             done("volume-level") { Actions.volumeLevel(it, 100) }
-        else -> Regex("^(?:set (?:the )?)?volume (?:to |at )?(\\d{1,3})(?: percent)?$").matchEntire(t)?.let { m ->
+        else -> Regex("^(?:set |change |put |turn )?(?:the )?volume (?:to |at )?(\\d{1,3})(?: percent)?$").matchEntire(digits(t))?.let { m ->
             val p = m.groupValues[1].toInt()
             if (p in 0..100) done("volume-level") { Actions.volumeLevel(it, p) }
             else hint("volume-invalid", "Say a volume from 0 to 100 percent.")
@@ -268,14 +297,14 @@ object CommandRouter {
     }
 
     private fun brightness(t: String): Match? {
-        val prefix = "^(?:set )?(?:the )?(?:screen )?brightness (?:to |at )?"
-        Regex("$prefix(\\d{1,3})(?: percent)?$").matchEntire(t)?.let { m ->
+        val prefix = "^(?:set |change |put |turn )?(?:the |my )?(?:screen )?brightness (?:to |at )?"
+        Regex("$prefix(\\d{1,3})(?: percent)?$").matchEntire(digits(t))?.let { m ->
             val p = m.groupValues[1].toInt()
-            if (p in 1..100) return done("brightness") { Actions.brightness(it, p) }
-            return hint("brightness-invalid", "Say a brightness from 1 to 100 percent.")
+            if (p in 0..100) return done("brightness") { Actions.brightness(it, p) }
+            return hint("brightness-invalid", "Say a brightness from 0 to 100 percent.")
         }
         if (Regex("$prefix(?:max|maximum|full)$").matches(t)) return done("brightness") { Actions.brightness(it, 100) }
-        if (Regex("$prefix(?:min|minimum|lowest)$").matches(t)) return done("brightness") { Actions.brightness(it, 1) }
+        if (Regex("$prefix(?:min|minimum|lowest)$").matches(t)) return done("brightness") { Actions.brightness(it, 0) }
         return null
     }
 
@@ -310,8 +339,15 @@ object CommandRouter {
             nav("nav-quick-settings", "Quick settings") { it.global(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_QUICK_SETTINGS, "Quick settings") }
         Regex("^(?:take (?:a )?)?screenshot$").matches(t) ->
             nav("nav-screenshot", "Taking a screenshot") { it.globalApi28(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT, "Screenshot taken") }
-        Regex("^lock (?:the |my )?(?:phone|screen|device|it)$|^lock it$").matches(t) ->
+        Regex("^lock (?:the |my )?(?:phone|screen|device|it)$|^lock it$|^(?:turn|switch) off (?:the |my )?(?:screen|display)$|" +
+            "^(?:turn|switch) (?:the |my )?(?:screen|display) off$|^screen off$|^(?:put (?:the |my )?(?:phone|screen) to )?sleep$").matches(t) ->
             nav("nav-lock", "Locking the phone") { it.globalApi28(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN, "Locked") }
+        // Android lets no ordinary app restart or power off the phone: open the system's own menu.
+        Regex("^(?:restart|reboot)(?: (?:the |my )?(?:phone|device)| it)?$").matches(t) ->
+            nav("nav-restart", "Opening the power menu") { it.global(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_POWER_DIALOG, "Android needs you to tap Restart") }
+        Regex("^(?:power off|shut down|shutdown)(?: (?:the |my )?(?:phone|device))?$|^(?:power menu|power options)$|" +
+            "^(?:turn|switch) off (?:the |my )?(?:phone|device)$|^(?:turn|switch) (?:the |my )?(?:phone|device) off$").matches(t) ->
+            nav("nav-power-off", "Opening the power menu") { it.global(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_POWER_DIALOG, "Android needs you to tap Power off") }
         Regex("^scroll (?:a bit |a little )?(up|down|further|more)$").matches(t) -> {
             val down = !t.endsWith("up")
             nav("nav-scroll-${if (down) "down" else "up"}", "Scrolling") { it.scroll(down) }
@@ -351,7 +387,7 @@ object CommandRouter {
 
     private fun alarm(t: String): Match? {
         val m = Regex("^(?:(?:set|create|make)(?: an?)? alarm (?:for|at)|wake me(?: up)? at) (\\d{1,2})(?: (\\d{2}))?(?: (am|pm))?$")
-            .matchEntire(t) ?: return null
+            .matchEntire(digits(t)) ?: return null
         val hour = m.groupValues[1].toInt()
         val minute = m.groupValues[2].ifEmpty { "0" }.toInt()
         val mer = m.groupValues[3].ifEmpty { null }
@@ -360,8 +396,9 @@ object CommandRouter {
 
     private fun timer(t: String): Match? {
         val unit = "(second|seconds|minute|minutes|hour|hours)"
-        val m = Regex("^(?:set (?:a |an )?)?timer(?: for)? (\\d+) $unit$").matchEntire(t)
-            ?: Regex("^(?:set (?:a |an )?)?(\\d+) $unit timer$").matchEntire(t)
+        val d = digits(t)
+        val m = Regex("^(?:set (?:a |an )?)?timer(?: for)? (\\d+) $unit$").matchEntire(d)
+            ?: Regex("^(?:set (?:a |an )?)?(\\d+) $unit timer$").matchEntire(d)
             ?: return null
         val n = m.groupValues[1].toIntOrNull() ?: return null
         val u = m.groupValues[2]
@@ -370,10 +407,12 @@ object CommandRouter {
 
     // ---- Phone -------------------------------------------------------------------------------
 
+    private fun lite(raw: String) = raw.trim().replace(Regex("\\s+"), " ")
+        .replace(Regex("^(hey |ok |okay )?(ajax )?(please )?(can you |could you )?(please )?", RegexOption.IGNORE_CASE), "")
+
     /** Uses the raw text so the message keeps its wording. Always asks before sending. */
     private fun sms(raw: String): Match? {
-        val lite = raw.trim().replace(Regex("\\s+"), " ")
-            .replace(Regex("^(hey |ok |okay )?(ajax )?(please )?(can you |could you )?(please )?", RegexOption.IGNORE_CASE), "")
+        val lite = lite(raw)
         val m = Regex(
             "^(?:text|message|sms|send (?:a )?(?:text|message) to) (.+?) (?:saying|that says|that|say) (.+)$",
             RegexOption.IGNORE_CASE,
@@ -382,6 +421,18 @@ object CommandRouter {
         val message = m.groupValues[2].trim()
         if (name.isEmpty() || message.isEmpty()) return null
         return Match("text") { Actions.prepareText(it, name, message) }
+    }
+
+    /** Opens the messaging app with the message filled in; the user sends it. The body is optional. */
+    private fun draft(raw: String): Match? {
+        val m = Regex(
+            "^(?:draft|write|compose|prepare)(?: me)?(?: an?)?(?: (?:text|sms|message))?(?: message)? to (.+?)(?: (?:saying|that says|that|say) (.+))?$",
+            RegexOption.IGNORE_CASE,
+        ).matchEntire(lite(raw)) ?: return null
+        val name = m.groupValues[1].trim().trim('.', ',')
+        val message = m.groupValues[2].trim()
+        if (name.isEmpty()) return null
+        return done("draft") { Actions.draftText(it, name, message) }
     }
 
     private fun call(t: String): Match? {

@@ -11,7 +11,7 @@ import java.io.File
  * host tool `ajax_eval`, which runs the real model on them.
  *
  * Outputs build/eval/<set>/: router.txt (scored lines + "ROUTER pass=N total=M"), cases.tsv,
- * prefix.txt, grammar.gbnf, suffix_<id>.txt. Also checks every expected answer routes.
+ * prefix.txt, suffix_<id>.txt, grammar_<id>.gbnf. Also checks every expected answer routes.
  */
 class EvalExportTest {
     private val c = IntentModel.Catalog
@@ -19,11 +19,20 @@ class EvalExportTest {
     /** Open-app / app-info depend on what is installed, so the eval treats them as model-bound. */
     private fun routerHandles(m: CommandRouter.Match?) = m != null && !m.hintOnly && m.id != "open-app" && m.id != "app-info"
 
+    private val slotStarts = listOf(
+        "brightness ", "volume ", "set an alarm for ", "timer ", "open ", "app info for ", "call ", "text ",
+        "draft a message to ", "search for ", "navigate to ", "tap ", "type ",
+    )
+
+    /** The per-request grammar must not rule out the right answer. */
+    private fun offered(answer: String, grammar: String) =
+        answer == "none" || grammar.contains("\"$answer\"") ||
+            slotStarts.any { answer.startsWith(it) && grammar.contains("\"$it\"") }
+
     private fun export(set: String, resource: String): Int {
         val src = javaClass.classLoader!!.getResource(resource)!!.readText()
         val out = File("build/eval/$set").apply { deleteRecursively(); mkdirs() }
         File(out, "prefix.txt").writeText(c.prefix)
-        File(out, "grammar.gbnf").writeText(c.grammar)
         val cases = StringBuilder()
         val router = StringBuilder()
         var n = 0
@@ -47,7 +56,10 @@ class EvalExportTest {
                 continue
             }
             val id = "%03d".format(n++)
-            File(out, "suffix_$id.txt").writeText(c.suffix(CommandRouter.normalize(request)))
+            val said = CommandRouter.normalize(request)
+            File(out, "suffix_$id.txt").writeText(c.suffix(said))
+            File(out, "grammar_$id.gbnf").writeText(c.grammar(said))
+            if (set == "main") assertTrue("grammar rules out the answer for: $request", wanted.any { offered(it, c.grammar(said)) })
             cases.append(id).append('\t').append(request).append('\t').append(answers).append('\n')
         }
         router.append("ROUTER pass=").append(routedPass).append(" total=").append(routed).append('\n')

@@ -33,6 +33,7 @@
 
     <application
         android:allowBackup="false"
+        android:hasFragileUserData="true"
         android:label="Ajax"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity

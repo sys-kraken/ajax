@@ -1,7 +1,9 @@
 package com.ajax.assistant
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CommandRouterTest {
@@ -171,6 +173,46 @@ class CommandRouterTest {
         assertEquals("rotate-off", id("stop the screen from rotating"))
         assertEquals("navigate", id("how do i get to the airport"))
         assertEquals("settings:main", id("open phone settings"))
+    }
+
+    @Test fun powerAndScreen() {
+        assertEquals("nav-restart", id("Restart the phone"))
+        assertEquals("nav-restart", id("reboot"))
+        assertEquals("nav-power-off", id("turn off the phone"))
+        assertEquals("nav-power-off", id("shut down"))
+        assertEquals("nav-lock", id("Turn off the screen"))
+        assertEquals("nav-lock", id("turn the display off"))
+        assertEquals("settings:screen", id("open screen settings"))
+    }
+
+    @Test fun drafting() {
+        assertEquals("draft", id("Draft a message to Franklin saying hi"))
+        assertEquals("draft", id("write a text to Franklin that I'm late"))
+        assertEquals("draft", id("compose a message to Franklin"))
+        assertEquals("text", id("text Franklin saying hi")) // sending still goes through yes/no
+        assertEquals("text", id("text mom saying turn on the light")) // the message is not a command
+    }
+
+    @Test fun spokenNumbers() {
+        assertEquals("brightness", id("Change brightness to zero percent"))
+        assertEquals("brightness", id("set the brightness to 0"))
+        assertEquals("brightness", id("brightness fifty"))
+        assertEquals("brightness", id("brightness a hundred percent"))
+        assertEquals("brightness-invalid", id("brightness 101"))
+        assertEquals("volume-level", id("change the volume to thirty five percent"))
+        assertEquals("timer", id("timer for five minutes"))
+        assertEquals("alarm", id("set an alarm for six thirty am"))
+        assertEquals("search", id("search for one direction"))
+    }
+
+    @Test fun followUpListening() {
+        for (keeps in listOf("flashlight on", "volume up", "whats the time", "turn on wifi", "scroll down", "pause")) {
+            assertFalse(keeps, CommandRouter.route(keeps)!!.endsConversation)
+        }
+        for (ends in listOf("open youtube", "wifi settings", "take a photo", "call mom", "navigate to the airport",
+            "search for pizza", "play music", "lock the phone", "restart the phone", "draft a message to mom")) {
+            assertTrue(ends, CommandRouter.route(ends)!!.endsConversation)
+        }
     }
 
     @Test fun lookalikesDoNotMisfire() {

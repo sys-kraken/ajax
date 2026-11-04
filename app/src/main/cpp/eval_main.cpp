@@ -1,7 +1,7 @@
 // Host-side model check (CI). Runs the phone's exact inference code over exported test cases.
 // Usage: ajax_eval <model.gguf> <eval-dir>
-//   <eval-dir>/grammar.gbnf, <eval-dir>/prefix.txt,
-//   <eval-dir>/cases.tsv (id \t request \t accepted answers joined by '|'), <eval-dir>/suffix_<id>.txt
+//   <eval-dir>/prefix.txt, <eval-dir>/cases.tsv (id \t request \t accepted answers joined by '|'),
+//   <eval-dir>/suffix_<id>.txt, <eval-dir>/grammar_<id>.gbnf (the phone builds the grammar per request)
 // Prints one line per case and a summary; exit code 0 always (the threshold is checked by CI).
 #include "llm_core.h"
 #include <chrono>
@@ -34,7 +34,6 @@ int main(int argc, char **argv) {
     const std::string dir = argv[2];
     ajax::Session *session = ajax::open(argv[1], 4); // 4 threads, like the phone
     if (!session) { std::fprintf(stderr, "model load failed\n"); return 2; }
-    const std::string grammar = slurp(dir + "/grammar.gbnf");
     const std::string prefix = slurp(dir + "/prefix.txt");
 
     std::ifstream cases(dir + "/cases.tsv");
@@ -49,7 +48,8 @@ int main(int argc, char **argv) {
         auto accepted = split(cols[2], '|');
         std::string out;
         auto t0 = std::chrono::steady_clock::now();
-        bool ok = ajax::complete(session, prefix, slurp(dir + "/suffix_" + id + ".txt"), grammar, 48, out);
+        bool ok = ajax::complete(session, prefix, slurp(dir + "/suffix_" + id + ".txt"),
+                                slurp(dir + "/grammar_" + id + ".gbnf"), 48, out);
         double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         totalMs += ms;
         if (ms > maxMs) maxMs = ms;

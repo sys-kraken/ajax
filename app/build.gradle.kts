@@ -11,14 +11,28 @@ android {
         applicationId = "com.ajax.assistant"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.4.0"
+        // CI run numbers only go up, so every build can install over the previous one.
+        versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 7
+        versionName = "0.5.0"
 
         // The on-device model needs a 64-bit ARM CPU; other phones simply don't get Stage 3.
         ndk { abiFilters += "arm64-v8a" }
         externalNativeBuild {
             cmake {
                 arguments += listOf("-DCMAKE_BUILD_TYPE=Release", "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON")
+            }
+        }
+    }
+
+    // Android only installs an update signed with the same key as the installed app, and a fresh CI
+    // machine would make a new debug key every time. Same key = no uninstall, so the model is kept.
+    signingConfigs {
+        getByName("debug") {
+            System.getenv("AJAX_KEYSTORE")?.takeIf { it.isNotEmpty() }?.let {
+                storeFile = file(it)
+                storePassword = System.getenv("AJAX_KEYSTORE_PASSWORD")
+                keyAlias = "ajax"
+                keyPassword = System.getenv("AJAX_KEYSTORE_PASSWORD")
             }
         }
     }

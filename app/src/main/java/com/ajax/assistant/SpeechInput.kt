@@ -16,6 +16,7 @@ class SpeechInput(private val ctx: Context, private val cb: Callback) {
         fun onPartial(text: String)
         fun onResults(candidates: List<String>)
         fun onError(message: String)
+        fun onNothingHeard() = onError("I didn't hear anything.")
     }
 
     private var rec: SpeechRecognizer? = null
@@ -133,10 +134,12 @@ class SpeechInput(private val ctx: Context, private val cb: Callback) {
                 return
             }
             if (error == 11) release()
+            if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT || error == SpeechRecognizer.ERROR_CLIENT) {
+                cb.onNothingHeard()
+                return
+            }
             cb.onError(
                 when (error) {
-                    SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT, SpeechRecognizer.ERROR_CLIENT ->
-                        "I didn't hear anything."
                     SpeechRecognizer.ERROR_AUDIO -> "Microphone problem."
                     SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission is missing."
                     SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT, SpeechRecognizer.ERROR_SERVER ->

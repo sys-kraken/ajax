@@ -8,13 +8,18 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.service.voice.VoiceInteractionSession
 import android.view.Gravity
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
 
-/** The small overlay shown when the side key is held: listens, acts, then closes. */
+/**
+ * The small overlay shown when the side key is held: listens and acts, then keeps listening for
+ * [FOLLOW_UP_MS] so commands can follow each other. Closes on silence, on "stop"/"thanks", on a tap
+ * outside the card, or after a command that hands the user over to something else.
+ */
 class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), SpeechInput.Callback {
 
     private val main = Handler(Looper.getMainLooper())
@@ -28,6 +33,16 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
 
     /** False once hidden: late speech/TTS callbacks from a previous press are ignored. */
     private var active = false
+
+    /** Bumped on every show and on destroy, so a command running in the background can't reopen a stale overlay. */
+    private var showCount = 0
+    private var resuming = false
+
+    /** Uptime until which silence means "listen again"; 0 before the first command of a conversation. */
+    private var followUpUntil = 0L
+
+    /** A reply is on the card: listening must not overwrite it. */
+    private var replyShown = false
 
     override fun onCreateContentView(): View {
         val dp = ctx.resources.displayMetrics.density
@@ -59,6 +74,10 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
         speaker.stop()
         brain.reset()
         active = true
+        showCount++
+        if (!resuming) followUpUntil = 0L
+        resuming = false
+        replyShown = false
         heardView.text = ""
         if (ctx.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             finishWith(Result(false, "Open Ajax and allow the microphone first."))
@@ -78,6 +97,7 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
 
     override fun onDestroy() {
         active = false
+        showCount++
         main.removeCallbacksAndMessages(null)
         speech.destroy()
         speaker.shutdown()
@@ -85,7 +105,8 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
     }
 
     override fun onListening(mode: String) {
-        if (active) resultView.text = "Listening…"
+        if (!active) return
+        if (replyShown) heardView.text = "Listening…" else resultView.text = "Listening…"
     }
 
     override fun onPartial(text: String) {
@@ -105,21 +126,53 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
         val after = reply.afterHide
         when {
             after != null -> {
-                // Accessibility acts on the window underneath, so close the overlay first.
-                // Own handler: close() destroys the session, which clears `main`.
-                close()
-                Handler(Looper.getMainLooper()).postDelayed({ AjaxAccessibilityService.announce(after()) }, 450)
+                // Accessibility acts on the window underneath, so get the overlay out of the way first.
+                // Own handler: closing or hiding clears `main`.
+                val shown = showCount
+                if (reply.ends) close() else { active = false; hide() }
+                Handler(Looper.getMainLooper()).postDelayed({
+                    AjaxAccessibilityService.announce(after()) {
+                        if (!reply.ends && shown == showCount) reopen()
+                    }
+                }, 450)
             }
-            reply.listenAgain -> {
-                resultView.text = reply.result.message
-                speaker.speak(reply.result.message) { if (active) speech.start() }
+            reply.listenAgain -> listenAfter(reply.result)
+            reply.ends -> finishWith(reply.result)
+            // A failed command only keeps an open conversation going; it can't extend it.
+            !reply.result.ok && SystemClock.uptimeMillis() >= followUpUntil -> finishWith(reply.result)
+            else -> listenAfter(reply.result, extend = reply.result.ok)
+        }
+    }
+
+    /** Back from a command that needed the overlay out of the way: show it again, listening. */
+    private fun reopen() {
+        resuming = true
+        followUpUntil = SystemClock.uptimeMillis() + FOLLOW_UP_MS
+        show(null, 0)
+    }
+
+    private fun listenAfter(r: Result, extend: Boolean = false) {
+        replyShown = true
+        resultView.text = r.message
+        speaker.speak(r.message) {
+            if (active) {
+                if (extend) followUpUntil = SystemClock.uptimeMillis() + FOLLOW_UP_MS
+                speech.start()
             }
-            else -> finishWith(reply.result)
         }
     }
 
     override fun onError(message: String) {
         if (active) finishWith(Result(false, message))
+    }
+
+    override fun onNothingHeard() {
+        if (!active) return
+        when {
+            followUpUntil == 0L -> finishWith(Result(false, "I didn't hear anything."))
+            SystemClock.uptimeMillis() < followUpUntil -> main.postDelayed({ if (active) speech.start() }, 200)
+            else -> close()
+        }
     }
 
     private fun finishWith(r: Result) {
@@ -131,5 +184,9 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
     private fun close() {
         active = false
         finish()
+    }
+
+    private companion object {
+        const val FOLLOW_UP_MS = 12_000L
     }
 }

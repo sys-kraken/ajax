@@ -146,8 +146,8 @@ object Actions {
         if (!Settings.System.canWrite(ctx)) {
             return Result(false, "Brightness needs the Modify system settings permission. Open Ajax and allow it.")
         }
-        val p = percent.coerceIn(1, 100)
-        val v = (p * 255 / 100).coerceAtLeast(1)
+        val p = percent.coerceIn(0, 100)
+        val v = p * 255 / 100 // 0 is the phone's dimmest level; Android doesn't turn the backlight off for it
         return try {
             val cr = ctx.contentResolver
             Settings.System.putInt(cr, Settings.System.SCREEN_BRIGHTNESS_MODE, Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
@@ -230,6 +230,16 @@ object Actions {
         val c = findContact(ctx, name)
         if (c.error != null) return Outcome.Done(Result(false, c.error))
         return Outcome.Ask("Send “$message” to ${c.name}?") { sendText(it, c.name.orEmpty(), c.number.orEmpty(), message) }
+    }
+
+    /** Opens the messaging app ready to send. Ajax sends nothing itself. */
+    fun draftText(ctx: Context, name: String, message: String): Result {
+        val c = findContact(ctx, name)
+        if (c.error != null) return Result(false, c.error)
+        val intent = Intent(Intent.ACTION_SENDTO, Uri.fromParts("smsto", c.number, null))
+        if (message.isNotEmpty()) intent.putExtra("sms_body", message)
+        return if (launch(ctx, intent)) Result(true, "Your message to ${c.name} is ready. Tap send when you're happy with it.")
+        else Result(false, "No messaging app found.")
     }
 
     @Suppress("DEPRECATION")

@@ -19,14 +19,18 @@ class AjaxAccessibilityService : AccessibilityService() {
     companion object {
         @Volatile var instance: AjaxAccessibilityService? = null
 
-        /** Shows and speaks a result from a command that ran after the overlay closed. */
-        fun announce(r: Result) {
-            instance?.say(r)
+        /**
+         * Shows and speaks a result from a command that ran after the overlay closed. [then] runs once
+         * the command has fully finished (a blank result means it is still running and reports later).
+         */
+        fun announce(r: Result, then: () -> Unit = {}) {
+            instance?.say(r, then) ?: then()
         }
     }
 
     private val handler = Handler(Looper.getMainLooper())
     private var speaker: Speaker? = null
+    private var whenFinished: (() -> Unit)? = null
 
     override fun onServiceConnected() {
         instance = this
@@ -44,10 +48,15 @@ class AjaxAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {}
 
-    fun say(r: Result) {
-        if (r.message.isBlank()) return
+    fun say(r: Result, then: (() -> Unit)? = null) {
+        if (r.message.isBlank()) {
+            whenFinished = then
+            return
+        }
+        val next = then ?: whenFinished
+        whenFinished = null
         Toast.makeText(this, r.message, Toast.LENGTH_SHORT).show()
-        speaker?.speak(r.message)
+        speaker?.speak(r.message, next) ?: next?.invoke()
     }
 
     fun global(action: Int, label: String): Result =

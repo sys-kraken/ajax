@@ -9,6 +9,8 @@ class Brain(private val ctx: Context) {
         val result: Result,
         val listenAgain: Boolean = false,
         val afterHide: (() -> Result)? = null,
+        /** Don't keep listening after this one. */
+        val ends: Boolean = false,
     )
 
     /** The phrase that was understood (for display). */
@@ -22,6 +24,10 @@ class Brain(private val ctx: Context) {
 
     private val yes = setOf("yes", "yeah", "yep", "yup", "confirm", "do it", "send it", "sure", "okay", "ok", "go ahead")
     private val no = setOf("no", "nope", "cancel", "stop", "dont", "don t", "never mind", "nevermind")
+    private val goodbye = setOf(
+        "stop", "cancel", "never mind", "nevermind", "nothing", "no", "nope", "no thanks", "no thank you", "thanks", "thank you",
+        "thats all", "thats it", "im done", "done", "bye", "goodbye", "close", "exit", "quit", "dismiss",
+    )
 
     /** Forget any unanswered yes/no question (new side-key press = new conversation). */
     fun reset() {
@@ -40,11 +46,16 @@ class Brain(private val ctx: Context) {
             val words = candidates.map { CommandRouter.normalize(it) }
             done(
                 when {
-                    words.any { it in yes } -> { pending = null; Reply(p.onYes(ctx)) }
-                    words.any { it in no } -> { pending = null; Reply(Result(true, "Cancelled.")) }
+                    words.any { it in yes } -> { pending = null; Reply(p.onYes(ctx), ends = p.endsConversation) }
+                    words.any { it in no } -> { pending = null; Reply(Result(true, "Cancelled."), ends = true) }
                     else -> Reply(Result(true, "Say yes or no."), listenAgain = true)
                 },
             )
+            return
+        }
+
+        if (candidates.any { CommandRouter.normalize(it) in goodbye }) {
+            done(Reply(Result(true, "Okay."), ends = true))
             return
         }
 
@@ -86,16 +97,16 @@ class Brain(private val ctx: Context) {
     private fun run(m: CommandRouter.Match, fromModel: Boolean, phrase: String = ""): Reply {
         // A guessed phone call is too costly to get wrong: confirm it first.
         if (fromModel && m.id == "call") {
-            val ask = Outcome.Ask("${phrase.replaceFirstChar { it.uppercase() }}?") { c ->
+            val ask = Outcome.Ask("${phrase.replaceFirstChar { it.uppercase() }}?", endsConversation = true) { c ->
                 (m.start(c) as? Outcome.Done)?.result ?: Result(false, "Couldn't place the call.")
             }
             pending = ask
             return Reply(Result(true, ask.prompt), listenAgain = true)
         }
         return when (val o = m.start(ctx)) {
-            is Outcome.Done -> Reply(o.result)
+            is Outcome.Done -> Reply(o.result, ends = m.endsConversation && o.result.ok)
             is Outcome.Ask -> { pending = o; Reply(Result(true, o.prompt), listenAgain = true) }
-            is Outcome.AfterHide -> Reply(Result(true, o.label), afterHide = { o.run(ctx) })
+            is Outcome.AfterHide -> Reply(Result(true, o.label), afterHide = { o.run(ctx) }, ends = m.endsConversation)
         }
     }
 }
