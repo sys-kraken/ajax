@@ -30,9 +30,6 @@ object CommandRouter {
         "nav-recents", "nav-notifications", "nav-quick-settings", "nav-lock", "nav-restart", "nav-power-off",
     )
 
-    private val needsAccessibility =
-        Result(false, "This needs Accessibility. Open Ajax and turn it on.")
-
     private val pages: Map<String, String> = buildMap {
         fun add(action: String, vararg names: String) = names.forEach { put(it, action) }
         add(Settings.ACTION_WIFI_SETTINGS, "wifi")
@@ -298,9 +295,8 @@ object CommandRouter {
             val now = tg.state?.invoke(it)
             if (now == wantOn) {
                 Outcome.Done(Result(true, "${tg.pretty} is already ${m.second}"))
-            } else if (AjaxAccessibilityService.instance == null) {
-                Outcome.Done(needsAccessibility)
             } else {
+                Access.refusal(it)?.let { no -> return@Match Outcome.Done(no) }
                 Outcome.AfterHide("Turning ${tg.pretty} ${m.second}") { ctx ->
                     val opened = try {
                         // The internet panel exists from Android 10; older phones get the mobile network page.
@@ -349,16 +345,18 @@ object CommandRouter {
 
     // ---- Navigating the UI (Accessibility) ---------------------------------------------------
 
+    private val serviceStopped = Result(false, "Accessibility stopped. Try again.")
+
     private fun nav(id: String, label: String, f: (AjaxAccessibilityService) -> Result) = Match(id) {
-        if (AjaxAccessibilityService.instance == null) Outcome.Done(needsAccessibility)
-        else Outcome.AfterHide(label) { AjaxAccessibilityService.instance?.let(f) ?: needsAccessibility }
+        Access.refusal(it)?.let { no -> return@Match Outcome.Done(no) }
+        Outcome.AfterHide(label) { AjaxAccessibilityService.instance?.let(f) ?: serviceStopped }
     }
 
     /** Android lets no ordinary app restart the phone, so Ajax presses the system power menu, after a yes. */
     private fun powerMenu(id: String, question: String, label: String, button: String) = Match(id) {
-        if (AjaxAccessibilityService.instance == null) Outcome.Done(needsAccessibility)
-        else Outcome.Ask(question, endsConversation = true) {
-            Outcome.AfterHide(label) { AjaxAccessibilityService.instance?.pressPowerMenu(button) ?: needsAccessibility }
+        Access.refusal(it)?.let { no -> return@Match Outcome.Done(no) }
+        Outcome.Ask(question, endsConversation = true) {
+            Outcome.AfterHide(label) { AjaxAccessibilityService.instance?.pressPowerMenu(button) ?: serviceStopped }
         }
     }
 

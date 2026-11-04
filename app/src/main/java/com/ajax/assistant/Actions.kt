@@ -73,6 +73,7 @@ object Actions {
         val app = findApp(ctx, name) ?: return Result(false, "I couldn't find an app called $name.")
         val intent = ctx.packageManager.getLaunchIntentForPackage(app.pkg)
             ?: return Result(false, "${app.label} can't be opened.")
+        Access.beforeOpening(ctx, app.pkg)
         return if (launch(ctx, intent)) Result(true, "Opening ${app.label}") else Result(false, "${app.label} can't be opened.")
     }
 

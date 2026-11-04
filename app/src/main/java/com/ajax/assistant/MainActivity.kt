@@ -56,7 +56,7 @@ class MainActivity : Activity(), SpeechInput.Callback {
                 { has(Manifest.permission.SEND_SMS) },
                 runtime = arrayOf(Manifest.permission.SEND_SMS)),
             Step("Accessibility", "Needed for Back, Home, scroll, screenshot, lock, and Wi-Fi/Bluetooth/data/airplane switches. Find Ajax in the list and turn it on. $restricted",
-                { AjaxAccessibilityService.instance != null },
+                { AjaxAccessibilityService.instance != null || Access.onDemand(this) },
                 intent = { Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS) }),
             Step("Change brightness", "Needed for “brightness 50 percent”.",
                 { Settings.System.canWrite(this) },
@@ -79,6 +79,7 @@ class MainActivity : Activity(), SpeechInput.Callback {
     private lateinit var setupRow: Ui.Row
     private lateinit var stepRows: LinearLayout
     private lateinit var engine: Ui.Row
+    private lateinit var accessMode: Ui.Row
     private lateinit var hint: TextView
     private lateinit var grant: Ui.Row
     private lateinit var talk: Button
@@ -173,6 +174,7 @@ class MainActivity : Activity(), SpeechInput.Callback {
             option("Speak replies", "", Prefs.SPEAK, true)
             option("Online speech recognition", "Audio may go to Google", Prefs.ONLINE, false)
             engine = Ui.row(this@MainActivity, "Speech engine").also { Ui.addRow(this, it.view) }
+            accessMode = Ui.row(this@MainActivity, "Accessibility").also { Ui.addRow(this, it.view) }
             Ui.addRow(this, Ui.row(this@MainActivity, "Voice settings").also {
                 it.onClick {
                     try { startActivity(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS)) }
@@ -216,6 +218,7 @@ class MainActivity : Activity(), SpeechInput.Callback {
 
     override fun onResume() {
         super.onResume()
+        Access.settle(this)
         ModelManager.listener = ::showModel
         showModel(ModelManager.state(this))
         refreshSteps()
@@ -282,6 +285,13 @@ class MainActivity : Activity(), SpeechInput.Callback {
 
     private fun refreshSteps() {
         engine.sub(Recognizers.delegate(this)?.packageName ?: "None found, install the Google app")
+        accessMode.sub(
+            when {
+                !Access.onDemand(this) -> "Controlled in Settings. On-demand mode needs one setup step from a PC."
+                Access.canSeeForeground(this) -> "On only while a command runs. Refused while GCash is open."
+                else -> "On only while a command runs."
+            },
+        )
         val ready = steps.count { it.granted() }
         val next = steps.firstOrNull { !it.granted() }
         setupRow.sub(if (next == null) "All ${steps.size} ready" else "$ready of ${steps.size} ready", Ui.ACCENT)
@@ -360,7 +370,7 @@ class MainActivity : Activity(), SpeechInput.Callback {
         when {
             after != null -> {
                 result.text = reply.result.message
-                main.postDelayed({ AjaxAccessibilityService.announce(after()) }, 450)
+                main.postDelayed({ Access.run(this, after) }, 450)
             }
             reply.listenAgain -> {
                 result.text = reply.result.message

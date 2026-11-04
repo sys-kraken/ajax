@@ -241,7 +241,7 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
                 val shown = showCount
                 if (reply.ends) close() else { active = false; hide() }
                 Handler(Looper.getMainLooper()).postDelayed({
-                    AjaxAccessibilityService.announce(after()) {
+                    Access.run(ctx, after) {
                         if (!reply.ends && shown == showCount) reopen()
                     }
                 }, 450)

@@ -36,6 +36,7 @@ class AjaxAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         instance = this
         speaker = Speaker(this)
+        Access.settle(this)
     }
 
     override fun onUnbind(intent: android.content.Intent?): Boolean {
