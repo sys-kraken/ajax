@@ -27,6 +27,7 @@ class Brain(private val ctx: Context) {
     private val goodbye = setOf(
         "stop", "cancel", "never mind", "nevermind", "nothing", "no", "nope", "no thanks", "no thank you", "thanks", "thank you",
         "thats all", "thats it", "im done", "done", "bye", "goodbye", "close", "exit", "quit", "dismiss",
+        "finite", "finite incantatem", "mischief managed",
     )
 
     /** Forget any unanswered yes/no question (new side-key press = new conversation). */

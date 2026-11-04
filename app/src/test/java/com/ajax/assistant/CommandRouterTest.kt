@@ -216,6 +216,29 @@ class CommandRouterTest {
         }
     }
 
+    @Test fun spells() {
+        assertEquals("torch-on", id("Lumos"))
+        assertEquals("torch-on", id("hey ajax lumos"))
+        assertEquals("torch-off", id("Nox"))
+        assertEquals("torch-off", id("knocks"))
+        assertEquals("brightness", id("lumos maxima"))
+        assertEquals("mute", id("silencio"))
+        assertEquals("volume-up", id("sonorus"))
+        assertEquals("volume-down", id("quietus"))
+        assertEquals("ringer-silent", id("muffliato"))
+        assertEquals("dnd-on", id("protego"))
+        assertEquals("nav-lock", id("colloportus"))
+        assertEquals("settings:main", id("alohomora"))
+        assertEquals("info-notifications", id("revelio"))
+        assertEquals("info-time", id("tempus"))
+        assertEquals("nav-home", id("evanesco"))
+        assertEquals("nav-back", id("expelliarmus"))
+        assertEquals("media-paused", id("stupefy"))
+        assertEquals("nav-restart", id("reparo"))
+        assertEquals("nav-power-off", id("avada kedavra"))
+        assertEquals("open-app", id("accio spotify"))
+    }
+
     @Test fun lookalikesDoNotMisfire() {
         assertNull(CommandRouter.route("turn on light mode")?.id?.takeIf { it.startsWith("torch") })
         assertEquals("toggle:Battery saver:on", id("turn on battery saver"))

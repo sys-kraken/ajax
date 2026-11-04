@@ -90,9 +90,37 @@ object CommandRouter {
     fun route(raw: String): Match? {
         val t = normalize(raw)
         if (t.isEmpty()) return null
-        return sms(raw) ?: draft(raw) ?: volume(t) ?: media(t) ?: ringer(t) ?: torch(t) ?: rotate(t) ?: toggle(t) ?: brightness(t) ?: dnd(t)
+        return sms(raw) ?: draft(raw) ?: spell(t) ?: volume(t) ?: media(t) ?: ringer(t) ?: torch(t) ?: rotate(t) ?: toggle(t) ?: brightness(t) ?: dnd(t)
             ?: nav(t) ?: screen(t) ?: info(t) ?: alarm(t) ?: timer(t) ?: camera(t) ?: search(t)
             ?: navigate(t) ?: appInfo(t) ?: settings(t) ?: call(t) ?: openApp(t)
+    }
+
+    /** Spells are other names for ordinary commands, including what speech recognition makes of them. */
+    private val spells: Map<String, String> = buildMap {
+        fun add(command: String, vararg names: String) = names.forEach { put(it, command) }
+        add("flashlight on", "lumos", "loomos", "lumus", "lumas")
+        add("flashlight off", "nox", "knox", "knocks", "nocks")
+        add("brightness max", "lumos maxima", "lumos maximus", "lumos solem")
+        add("mute", "silencio")
+        add("volume up", "sonorus", "sonoris")
+        add("volume down", "quietus")
+        add("silent mode", "muffliato")
+        add("do not disturb on", "protego")
+        add("lock the phone", "colloportus")
+        add("open settings", "alohomora", "aloha mora")
+        add("read my notifications", "revelio")
+        add("what time is it", "tempus")
+        add("go home", "evanesco")
+        add("go back", "expelliarmus")
+        add("pause music", "stupefy")
+        add("restart the phone", "reparo") // still asks yes or no
+        add("turn off the phone", "avada kedavra") // still asks yes or no
+    }
+
+    private fun spell(t: String): Match? {
+        spells[t]?.let { return route(it) }
+        val app = Regex("^accio (.+)$").matchEntire(t)?.groupValues?.get(1) ?: return null
+        return route("open $app")
     }
 
     private fun done(id: String, f: (Context) -> Result) = Match(id) { Outcome.Done(f(it)) }
