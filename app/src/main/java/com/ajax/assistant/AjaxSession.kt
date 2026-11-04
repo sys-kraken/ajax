@@ -102,7 +102,7 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
             isFocusableInTouchMode = true
             descendantFocusability = android.view.ViewGroup.FOCUS_BEFORE_DESCENDANTS
             setPadding(ctx.dp(14), ctx.dp(14), ctx.dp(14), ctx.dp(14))
-            background = Ui.rounded(ctx, Ui.SURFACE, 24, Ui.HAIRLINE)
+            background = Ui.rounded(ctx, Ui.SURFACE, 26)
             elevation = ctx.dp(12).toFloat()
             addView(chatScroll)
             addView(status)
@@ -169,7 +169,7 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
     private fun bubble(text: String, mine: Boolean): TextView {
         val view = Ui.text(ctx, if (mine) 15f else 16f).apply {
             this.text = text
-            background = Ui.rounded(ctx, if (mine) Ui.SURFACE_RAISED else Ui.BACKGROUND, 16)
+            background = Ui.rounded(ctx, if (mine) Ui.SURFACE_RAISED else Ui.BACKGROUND, 18)
             setPadding(ctx.dp(12), ctx.dp(8), ctx.dp(12), ctx.dp(8))
         }
         chat.addView(view, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {

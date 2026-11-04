@@ -43,8 +43,9 @@
             android:exported="true"
             android:launchMode="singleTop">
             <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
+                <!-- Opened from Settings, not from an app icon: the gear on the app's info page. -->
+                <action android:name="android.intent.action.APPLICATION_PREFERENCES" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
 

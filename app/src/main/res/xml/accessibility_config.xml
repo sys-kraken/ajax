@@ -6,4 +6,5 @@
     android:canPerformGestures="true"
     android:canRetrieveWindowContent="true"
     android:description="@string/a11y_description"
-    android:notificationTimeout="100" />
+    android:notificationTimeout="100"
+    android:settingsActivity="com.ajax.assistant.MainActivity" />

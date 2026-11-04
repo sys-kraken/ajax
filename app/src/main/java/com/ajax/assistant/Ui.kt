@@ -6,20 +6,26 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.view.Gravity
+import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.Switch
 import android.widget.TextView
 
-/** Colours and small view builders shared by the setup screen and the overlay. No AndroidX. */
+/**
+ * Colours and small view builders shared by the setup screen and the overlay, in the style of the
+ * phone's own Settings: true black for OLED, rounded groups of rows. No AndroidX.
+ */
 object Ui {
-    const val BACKGROUND = 0xFF0A0A0B.toInt()
-    const val SURFACE = 0xFF151517.toInt()
-    const val SURFACE_RAISED = 0xFF232326.toInt()
-    const val HAIRLINE = 0xFF2B2B2F.toInt()
-    const val TEXT = 0xFFF5F5F7.toInt()
-    const val MUTED = 0xFF98989F.toInt()
-    const val GOOD = 0xFF8FD6AE.toInt()
-    const val ATTENTION = 0xFFE6C583.toInt()
+    const val BACKGROUND = 0xFF000000.toInt()
+    const val SURFACE = 0xFF1A1A1C.toInt()
+    const val SURFACE_RAISED = 0xFF2C2C2E.toInt()
+    const val HAIRLINE = 0xFF2E2E30.toInt()
+    const val TEXT = 0xFFFAFAFA.toInt()
+    const val MUTED = 0xFF9C9CA1.toInt()
+    const val ACCENT = 0xFF3E91FF.toInt()
+    private const val PRESSED = 0x33FFFFFF
+    private const val GROUP_RADIUS = 26
 
     private val MEDIUM = Typeface.create("sans-serif-medium", Typeface.NORMAL)
 
@@ -37,10 +43,16 @@ object Ui {
         if (bold) typeface = MEDIUM
     }
 
-    fun card(ctx: Context) = LinearLayout(ctx).apply {
+    /** A rounded group of rows. Add rows with [addRow] so they get dividers. */
+    fun group(ctx: Context) = LinearLayout(ctx).apply {
         orientation = LinearLayout.VERTICAL
-        background = rounded(ctx, SURFACE, 18, HAIRLINE)
-        val p = ctx.dp(18)
+        background = rounded(ctx, SURFACE, GROUP_RADIUS)
+        clipToOutline = true
+    }
+
+    /** A group with room around its content, for anything that isn't a row. */
+    fun card(ctx: Context) = group(ctx).apply {
+        val p = ctx.dp(20)
         setPadding(p, p, p, p)
     }
 
@@ -49,25 +61,63 @@ object Ui {
         LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT,
     ).apply { bottomMargin = ctx.dp(bottomDp) }
 
-    fun button(ctx: Context, label: String, primary: Boolean) = Button(ctx).apply {
-        text = label
-        isAllCaps = false
-        textSize = 15f
-        typeface = MEDIUM
-        stateListAnimator = null
-        minHeight = ctx.dp(48)
-        setTextColor(if (primary) BACKGROUND else TEXT)
-        background = RippleDrawable(
-            ColorStateList.valueOf(if (primary) MUTED else HAIRLINE),
-            rounded(ctx, if (primary) TEXT else SURFACE_RAISED, 14),
-            null,
-        )
+    /** One row of a group: a title, an optional line under it, and optionally something at the end. */
+    class Row(val view: LinearLayout, val title: TextView, val sub: TextView) {
+        fun sub(text: CharSequence, color: Int = MUTED) {
+            sub.text = text
+            sub.setTextColor(color)
+            sub.visibility = if (text.isEmpty()) View.GONE else View.VISIBLE
+        }
+
+        fun onClick(action: () -> Unit) {
+            view.background = RippleDrawable(ColorStateList.valueOf(PRESSED), null, GradientDrawable().apply { setColor(TEXT) })
+            view.setOnClickListener { action() }
+        }
     }
 
-    fun pill(ctx: Context, label: String, color: Int) = text(ctx, 12f, color, bold = true).apply {
+    fun row(ctx: Context, title: String, sub: String = "", subColor: Int = MUTED, end: View? = null): Row {
+        val titleView = text(ctx, 17f).apply { text = title }
+        val subView = text(ctx, 14f, subColor)
+        val words = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(titleView)
+            addView(subView)
+        }
+        val view = LinearLayout(ctx).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = ctx.dp(60)
+            setPadding(ctx.dp(20), ctx.dp(14), ctx.dp(20), ctx.dp(14))
+            addView(words, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            if (end != null) addView(end)
+        }
+        return Row(view, titleView, subView).also { it.sub(sub, subColor) }
+    }
+
+    /** Adds [view] to [group], with an inset divider if it isn't the first. */
+    fun addRow(group: LinearLayout, view: View) {
+        val ctx = group.context
+        if (group.childCount > 0) {
+            group.addView(View(ctx).apply { setBackgroundColor(HAIRLINE) }, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, ctx.dp(1).coerceAtLeast(1),
+            ).apply { marginStart = ctx.dp(20); marginEnd = ctx.dp(20) })
+        }
+        group.addView(view)
+    }
+
+    fun switch(ctx: Context) = Switch(ctx).apply {
+        val checked = intArrayOf(android.R.attr.state_checked)
+        val other = intArrayOf()
+        thumbTintList = ColorStateList.valueOf(TEXT)
+        trackTintList = ColorStateList(arrayOf(checked, other), intArrayOf(ACCENT, 0xFF6A6A6E.toInt()))
+    }
+
+    fun button(ctx: Context, label: String) = Button(ctx).apply {
         text = label
-        gravity = Gravity.CENTER
-        setPadding(ctx.dp(10), ctx.dp(3), ctx.dp(10), ctx.dp(3))
-        background = rounded(ctx, SURFACE_RAISED, 12)
+        isAllCaps = false
+        textSize = 18f
+        typeface = MEDIUM
+        stateListAnimator = null
+        setTextColor(TEXT)
+        background = RippleDrawable(ColorStateList.valueOf(ACCENT), rounded(ctx, SURFACE, GROUP_RADIUS), null)
     }
 }

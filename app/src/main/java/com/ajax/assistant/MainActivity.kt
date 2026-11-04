@@ -8,7 +8,6 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -25,7 +24,6 @@ import android.widget.Button
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.Switch
 import android.widget.TextView
 import com.ajax.assistant.Ui.dp
 
@@ -78,17 +76,16 @@ class MainActivity : Activity(), SpeechInput.Callback {
     private lateinit var speech: SpeechInput
     private lateinit var speaker: Speaker
     private lateinit var brain: Brain
-    private lateinit var setupTitle: TextView
-    private lateinit var detailsToggle: TextView
+    private lateinit var setupRow: Ui.Row
     private lateinit var stepRows: LinearLayout
-    private lateinit var engine: TextView
+    private lateinit var engine: Ui.Row
     private lateinit var hint: TextView
-    private lateinit var grant: Button
+    private lateinit var grant: Ui.Row
     private lateinit var talk: Button
     private lateinit var heard: TextView
     private lateinit var result: TextView
-    private lateinit var modelStatus: TextView
-    private lateinit var modelButton: Button
+    private lateinit var modelStatus: Ui.Row
+    private lateinit var modelButton: Ui.Row
     private val main = Handler(Looper.getMainLooper())
     private var openSettingsMode = false
     private var showDetails = false
@@ -103,25 +100,25 @@ class MainActivity : Activity(), SpeechInput.Callback {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(16), dp(16), dp(24))
+            setPadding(dp(12), dp(4), dp(12), dp(24))
         }
 
         root.addView(LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(56)
             addView(ImageView(this@MainActivity).apply {
-                setImageResource(R.drawable.ajax_logo)
-                adjustViewBounds = true
-                contentDescription = "Ajax"
-            }, LinearLayout.LayoutParams(dp(92), WRAP_CONTENT))
-            addView(View(this@MainActivity), LinearLayout.LayoutParams(0, 0, 1f))
-            addView(Ui.text(this@MainActivity, 12f, Ui.MUTED).apply {
-                text = "Version " + packageManager.getPackageInfo(packageName, 0).versionName
+                setImageResource(R.drawable.ic_back)
+                contentDescription = "Back"
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+                setOnClickListener { finish() }
             })
-        }, Ui.below(this, 16))
+            addView(Ui.text(this@MainActivity, 22f, bold = true).apply {
+                text = "Ajax"
+                setPadding(dp(8), 0, 0, 0)
+            })
+        }, Ui.below(this, 12))
 
-        talk = Ui.button(this, TALK_LABEL, primary = true).apply {
-            textSize = 20f
-            typeface = Typeface.DEFAULT_BOLD
+        talk = Ui.button(this, TALK_LABEL).apply {
             setOnTouchListener { v, e ->
                 when (e.action) {
                     MotionEvent.ACTION_DOWN -> { v.isPressed = true; text = "Listening"; startListening(); true }
@@ -131,57 +128,63 @@ class MainActivity : Activity(), SpeechInput.Callback {
                 }
             }
         }
-        root.addView(talk, LinearLayout.LayoutParams(MATCH_PARENT, dp(84)).apply { bottomMargin = dp(12) })
+        root.addView(talk, LinearLayout.LayoutParams(MATCH_PARENT, dp(72)).apply { bottomMargin = dp(12) })
 
         root.addView(Ui.card(this).apply {
             heard = Ui.text(this@MainActivity, 14f, Ui.MUTED).also { addView(it) }
-            result = Ui.text(this@MainActivity, 18f).apply {
-                hint = "Hold the button or the side key, then speak. After the side key, Ajax keeps listening; say stop to finish."
+            result = Ui.text(this@MainActivity, 17f).apply {
+                hint = "Hold the button or the side key, then speak."
                 setHintTextColor(Ui.MUTED)
             }.also { addView(it) }
         }, Ui.below(this, 12))
 
-        root.addView(Ui.card(this).apply {
-            val row = LinearLayout(this@MainActivity).apply { gravity = Gravity.CENTER_VERTICAL }
-            setupTitle = Ui.text(this@MainActivity, 17f, bold = true).also {
-                row.addView(it, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        root.addView(Ui.group(this).apply {
+            setupRow = Ui.row(this@MainActivity, "Setup").also {
+                it.onClick { showDetails = !showDetails; refreshSteps() }
+                Ui.addRow(this, it.view)
             }
-            detailsToggle = Ui.text(this@MainActivity, 14f, Ui.TEXT, bold = true).apply {
-                setPadding(dp(8), dp(8), 0, dp(8))
-                setOnClickListener { showDetails = !showDetails; refreshSteps() }
-            }.also { row.addView(it) }
-            addView(row)
-            stepRows = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL }.also { addView(it) }
-            hint = Ui.text(this@MainActivity, 13f, Ui.MUTED).apply { setPadding(0, dp(8), 0, dp(8)) }.also { addView(it) }
-            grant = Ui.button(this@MainActivity, "", primary = true).apply { setOnClickListener { onGrantClicked() } }.also { addView(it) }
+            stepRows = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL }
+            addView(stepRows)
+            hint = Ui.text(this@MainActivity, 14f, Ui.MUTED).apply { setPadding(dp(20), dp(12), dp(20), 0) }.also { addView(it) }
+            grant = Ui.row(this@MainActivity, "").also {
+                it.title.setTextColor(Ui.ACCENT)
+                it.onClick { onGrantClicked() }
+                addView(it.view)
+            }
         }, Ui.below(this, 12))
 
-        root.addView(Ui.card(this).apply {
-            addView(Ui.text(this@MainActivity, 17f, bold = true).apply { text = "Smart understanding" })
-            modelStatus = Ui.text(this@MainActivity, 13f, Ui.MUTED).apply { setPadding(0, dp(6), 0, dp(10)) }.also { addView(it) }
-            modelButton = Ui.button(this@MainActivity, "", primary = false).apply { setOnClickListener { onModelClicked() } }.also { addView(it) }
+        root.addView(Ui.group(this).apply {
+            modelStatus = Ui.row(this@MainActivity, "Smart understanding").also { Ui.addRow(this, it.view) }
+            modelButton = Ui.row(this@MainActivity, "").also {
+                it.title.setTextColor(Ui.ACCENT)
+                it.onClick { onModelClicked() }
+                Ui.addRow(this, it.view)
+            }
         }, Ui.below(this, 12))
 
-        root.addView(Ui.card(this).apply {
-            addView(Ui.text(this@MainActivity, 17f, bold = true).apply { text = "Preferences" })
-            fun option(label: String, key: String, default: Boolean) = addView(Switch(this@MainActivity).apply {
-                text = label
-                textSize = 14f
-                setTextColor(Ui.TEXT)
-                setPadding(0, dp(10), 0, dp(10))
-                isChecked = prefs.getBoolean(key, default)
-                setOnCheckedChangeListener { _, on -> prefs.edit().putBoolean(key, on).apply() }
-            })
-            option("Speak replies", Prefs.SPEAK, true)
-            option("Allow online speech recognition (audio may go to Google)", Prefs.ONLINE, false)
-            engine = Ui.text(this@MainActivity, 12f, Ui.MUTED).apply { setPadding(0, dp(4), 0, dp(10)) }.also { addView(it) }
-            addView(Ui.button(this@MainActivity, "Open voice settings", primary = false).apply {
-                setOnClickListener {
+        root.addView(Ui.group(this).apply {
+            fun option(label: String, sub: String, key: String, default: Boolean) {
+                val toggle = Ui.switch(this@MainActivity).apply {
+                    isChecked = prefs.getBoolean(key, default)
+                    setOnCheckedChangeListener { _, on -> prefs.edit().putBoolean(key, on).apply() }
+                }
+                Ui.addRow(this, Ui.row(this@MainActivity, label, sub, end = toggle).also { r -> r.onClick { toggle.toggle() } }.view)
+            }
+            option("Speak replies", "", Prefs.SPEAK, true)
+            option("Online speech recognition", "Audio may go to Google", Prefs.ONLINE, false)
+            engine = Ui.row(this@MainActivity, "Speech engine").also { Ui.addRow(this, it.view) }
+            Ui.addRow(this, Ui.row(this@MainActivity, "Voice settings").also {
+                it.onClick {
                     try { startActivity(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS)) }
                     catch (e: ActivityNotFoundException) { show(Result(false, "This phone has no voice settings page.")) }
                 }
-            })
+            }.view)
         }, Ui.below(this, 12))
+
+        root.addView(Ui.group(this).apply {
+            val version = packageManager.getPackageInfo(packageName, 0).versionName.orEmpty()
+            Ui.addRow(this, Ui.row(this@MainActivity, "Version", version).view)
+        })
 
         setContentView(ScrollView(this).apply {
             setBackgroundColor(Ui.BACKGROUND)
@@ -229,29 +232,30 @@ class MainActivity : Activity(), SpeechInput.Callback {
     private fun showModel(s: ModelManager.State) {
         val mb = { b: Long -> b / 1_000_000 }
         if (!LlamaNative.available) {
-            modelStatus.text = "Not supported on this phone (needs a 64-bit ARM processor)."
-            modelButton.visibility = View.GONE
+            modelStatus.sub("Not supported on this phone (needs a 64-bit ARM processor).")
+            modelButton.view.visibility = View.GONE
             return
         }
-        modelButton.isEnabled = s !is ModelManager.State.Downloading
+        modelButton.view.isEnabled = s !is ModelManager.State.Downloading
         when (s) {
             is ModelManager.State.Ready -> {
-                modelStatus.text = "On. Ajax understands loose phrasing like “could you flip the torch on”. " +
-                    "Runs fully on the phone."
-                modelButton.text = "Delete model (free ${mb(ModelManager.SIZE_BYTES)} MB)"
+                modelStatus.sub("On. Understands loose phrasing like “could you flip the torch on”. Runs fully on the phone.")
+                modelButton.title.text = "Delete model (free ${mb(ModelManager.SIZE_BYTES)} MB)"
             }
             is ModelManager.State.Downloading -> {
-                modelStatus.text = "Downloading… ${mb(s.done)} of ${mb(s.total)} MB. You can leave this screen."
-                modelButton.text = "Downloading…"
+                modelStatus.sub("Downloading… ${mb(s.done)} of ${mb(s.total)} MB. You can leave this screen.")
+                modelButton.title.text = "Downloading…"
             }
             is ModelManager.State.Failed -> {
-                modelStatus.text = s.message
-                modelButton.text = "Retry download"
+                modelStatus.sub(s.message)
+                modelButton.title.text = "Retry download"
             }
             is ModelManager.State.Missing -> {
-                modelStatus.text = "Downloads a ${mb(ModelManager.SIZE_BYTES)} MB language model once (use Wi-Fi). " +
-                    "After that it runs offline; your words never leave the phone."
-                modelButton.text = "Download model"
+                modelStatus.sub(
+                    "Downloads a ${mb(ModelManager.SIZE_BYTES)} MB language model once (use Wi-Fi). " +
+                        "After that it runs offline; your words never leave the phone.",
+                )
+                modelButton.title.text = "Download model"
             }
         }
     }
@@ -277,30 +281,28 @@ class MainActivity : Activity(), SpeechInput.Callback {
     }
 
     private fun refreshSteps() {
-        engine.text = "Speech engine: " + (Recognizers.delegate(this)?.packageName ?: "none found, install the Google app")
+        engine.sub(Recognizers.delegate(this)?.packageName ?: "None found, install the Google app")
         val ready = steps.count { it.granted() }
         val next = steps.firstOrNull { !it.granted() }
-        setupTitle.text = if (next == null) "Setup complete" else "Setup: $ready of ${steps.size} ready"
+        setupRow.sub(if (next == null) "All ${steps.size} ready" else "$ready of ${steps.size} ready", Ui.ACCENT)
         val expanded = next != null || showDetails
-        detailsToggle.visibility = if (next == null) View.VISIBLE else View.GONE
-        detailsToggle.text = if (showDetails) "Hide" else "Show"
         stepRows.visibility = if (expanded) View.VISIBLE else View.GONE
         stepRows.removeAllViews()
         if (expanded) steps.forEach { step ->
             val ok = step.granted()
-            stepRows.addView(LinearLayout(this).apply {
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(0, dp(8), 0, dp(8))
-                addView(Ui.text(this@MainActivity, 14f).apply { text = step.label }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-                addView(Ui.pill(this@MainActivity, if (ok) "Ready" else "Set up", if (ok) Ui.GOOD else Ui.ATTENTION))
-                if (!ok) setOnClickListener { open(step) }
+            val row = Ui.row(this, step.label, if (ok) "Ready" else "Needs setup", if (ok) Ui.MUTED else Ui.ACCENT)
+            if (!ok) row.onClick { open(step) }
+            stepRows.addView(View(this).apply { setBackgroundColor(Ui.HAIRLINE) }, LinearLayout.LayoutParams(MATCH_PARENT, dp(1).coerceAtLeast(1)).apply {
+                marginStart = dp(20)
+                marginEnd = dp(20)
             })
+            stepRows.addView(row.view)
         }
-        grant.visibility = if (next == null) View.GONE else View.VISIBLE
+        grant.view.visibility = if (next == null) View.GONE else View.VISIBLE
         hint.visibility = if (next == null) View.GONE else View.VISIBLE
         if (next == null) openSettingsMode = false
         hint.text = next?.hint.orEmpty()
-        grant.text = if (openSettingsMode) "Open app settings (permission was blocked)" else "Set up: ${next?.label}"
+        grant.title.text = if (openSettingsMode) "Open app settings (permission was blocked)" else "Set up: ${next?.label}"
         talk.isEnabled = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
     }
 
