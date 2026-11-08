@@ -58,8 +58,10 @@ object MicGuard {
     /** Phone, video and voice calls, and a ringing phone. */
     fun inCall(ctx: Context): Boolean {
         val mode = ctx.getSystemService(AudioManager::class.java)?.mode ?: return false
+        // While the phone rings Ajax may keep listening, for "answer" or "decline".
+        if (mode == AudioManager.MODE_RINGTONE) return !CallVoice.ringing
         return mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION ||
-            mode == AudioManager.MODE_RINGTONE || mode == AudioManager.MODE_CALL_SCREENING ||
+            mode == AudioManager.MODE_CALL_SCREENING ||
             (Build.VERSION.SDK_INT >= 33 && mode == AudioManager.MODE_COMMUNICATION_REDIRECT) ||
             (Build.VERSION.SDK_INT >= 30 && mode == AudioManager.MODE_CALL_REDIRECT)
     }
@@ -91,6 +93,35 @@ object MicGuard {
         main.removeCallbacks(recheck)
         main.postDelayed(recheck, GRACE_MS)
     }
+
+    private var focus: android.media.AudioFocusRequest? = null
+
+    /**
+     * Asks music and video apps to pause while Ajax listens to you (they resume afterwards), the way
+     * other assistants do. Call [quietMedia] with false to give the audio back.
+     */
+    fun quietMedia(ctx: Context, quiet: Boolean) {
+        val am = ctx.getSystemService(AudioManager::class.java) ?: return
+        if (Build.VERSION.SDK_INT < 26) return
+        if (quiet) {
+            if (focus != null) return
+            val attrs = android.media.AudioAttributes.Builder()
+                .setUsage(android.media.AudioAttributes.USAGE_ASSISTANT)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                .build()
+            val req = android.media.AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                .setAudioAttributes(attrs)
+                .setOnAudioFocusChangeListener { }
+                .build()
+            if (am.requestAudioFocus(req) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) focus = req
+        } else {
+            focus?.let { am.abandonAudioFocusRequest(it) }
+            focus = null
+        }
+    }
+
+    /** Looks at the microphone again now (something that changes who may use it just happened). */
+    fun refresh() = check()
 
     fun watch(ctx: Context) {
         if (callback != null) return

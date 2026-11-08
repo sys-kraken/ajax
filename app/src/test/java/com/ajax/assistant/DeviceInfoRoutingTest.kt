@@ -28,8 +28,10 @@ class DeviceInfoRoutingTest {
 
     @Test fun stoppingTheListedApps() = check(
         "force-stop-listed",
-        "can you terminate it", "terminate them", "kill all background apps", "close all the apps", "force stop everything",
+        "terminate them", "kill all background apps", "close all the apps", "force stop everything",
     )
+
+    @Test fun stoppingItWithoutKnowingWhichApp() = check("force-stop-which", "can you terminate it")
 
     @Test fun stoppingOneApp() {
         check("force-stop-app", "force stop instagram", "close telegram", "kill the voice recorder app")

@@ -84,6 +84,9 @@ class MainActivity : Activity(), SpeechInput.Callback {
     private lateinit var wakeSwitch: android.widget.Switch
     private lateinit var heardRow: Ui.Row
     private lateinit var batteryRow: Ui.Row
+    private lateinit var callsRow: Ui.Row
+    private lateinit var teachRow: Ui.Row
+    private lateinit var callsSwitch: android.widget.Switch
     private lateinit var hint: TextView
     private lateinit var grant: Ui.Row
     private lateinit var talk: Button
@@ -177,6 +180,18 @@ class MainActivity : Activity(), SpeechInput.Callback {
                 Ui.addRow(this, it.view)
             }
             heardRow = Ui.row(this@MainActivity, "Last heard", "Say “Ajax” or “lumos” to test").also { Ui.addRow(this, it.view) }
+            callsSwitch = Ui.switch(this@MainActivity).apply {
+                isChecked = prefs.getBoolean(Prefs.CALLS, false)
+                setOnCheckedChangeListener { _, on -> setCalls(on) }
+            }
+            callsRow = Ui.row(this@MainActivity, "Announce callers", end = callsSwitch).also {
+                it.onClick { callsSwitch.toggle() }
+                Ui.addRow(this, it.view)
+            }
+            teachRow = Ui.row(this@MainActivity, "Teach Ajax your voice").also {
+                it.onClick { teachVoice() }
+                Ui.addRow(this, it.view)
+            }
             batteryRow = Ui.row(this@MainActivity, "Run in the background").also {
                 it.onClick { allowBackground() }
                 Ui.addRow(this, it.view)
@@ -339,10 +354,44 @@ class MainActivity : Activity(), SpeechInput.Callback {
             },
         )
         heardRow.view.visibility = if (on && WakeService.running) View.VISIBLE else View.GONE
+        callsRow.view.visibility = if (on) View.VISIBLE else View.GONE
+        teachRow.view.visibility = if (on) View.VISIBLE else View.GONE
+        if (!teaching) {
+            val n = VoiceSamples.count(this)
+            teachRow.sub(if (n == 0) "Say \u201cAjax\u201d ${VoiceSamples.TAKES} times so it learns your voice." else "$n recordings saved. Tap to record more.")
+        }
+        callsRow.sub(
+            when {
+                !callsSwitch.isChecked -> "Off"
+                CallVoice.enabled(this) -> "Says who is calling, then answer or decline by voice."
+                else -> "Needs phone and call log permission. Tap to allow."
+            },
+        )
         val pm = getSystemService(android.os.PowerManager::class.java)
         val free = pm?.isIgnoringBatteryOptimizations(packageName) == true
         batteryRow.view.visibility = if (on) View.VISIBLE else View.GONE
         batteryRow.sub(if (free) "Allowed" else "Tap so the phone doesn't stop Ajax listening", if (free) Ui.MUTED else Ui.ACCENT)
+    }
+
+    private var teaching = false
+
+    private fun teachVoice() {
+        if (teaching) return
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
+        teaching = true
+        VoiceSamples.record(this, progress = { teachRow.sub(it, Ui.ACCENT) }) {
+            teaching = false
+            showWake()
+        }
+    }
+
+    private fun setCalls(on: Boolean) {
+        getSharedPreferences(Prefs.NAME, MODE_PRIVATE).edit().putBoolean(Prefs.CALLS, on).apply()
+        if (on) {
+            val missing = CallVoice.permissions.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+            if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), 3)
+        }
+        showWake()
     }
 
     @android.annotation.SuppressLint("BatteryLife")

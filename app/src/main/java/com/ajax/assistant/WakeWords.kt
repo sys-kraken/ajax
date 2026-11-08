@@ -8,13 +8,16 @@ package com.ajax.assistant
 object WakeWords {
     enum class Kind { WAKE, TORCH_ON, TORCH_OFF }
 
+    /** "Ajax" said on its own: the whole utterance, with the pause after it, fits in 1.7 s (50 ms chunks). */
+    const val MAX_WAKE_CHUNKS = 34
+
     /**
      * How sure the recogniser must be before "Ajax" opens anything. The flashlight words need less:
      * a wrong flashlight is harmless, and their sound-alike spellings share the score between them.
      * Audio from the phone's own speaker (a video saying "Ajax") must be clearer still.
      */
     fun minConfidence(kind: Kind, mediaPlaying: Boolean): Double = when (kind) {
-        Kind.WAKE -> if (mediaPlaying) 0.95 else 0.7
+        Kind.WAKE -> if (mediaPlaying) MIN_CONFIDENCE_IN_AUDIO else 0.7
         else -> if (mediaPlaying) 0.6 else 0.0
     }
 
@@ -36,6 +39,12 @@ object WakeWords {
     /** Everything the recogniser listens for. */
     val phrases: List<String> get() = (wake + torchOn + torchOff).toList()
 
+    /** How sure the recogniser must be of "Ajax" heard inside other sound while the phone plays audio. */
+    const val MIN_CONFIDENCE_IN_AUDIO = 0.75
+
+    /** "Ajax" as a word anywhere in the phrase. */
+    fun containsWake(text: String): Boolean = "ajax" in normalize(text).split(" ")
+
     fun normalize(text: String): String =
         text.lowercase().replace(Regex("[^a-z ]"), " ").replace(Regex("\\s+"), " ").trim()
 
@@ -50,7 +59,7 @@ object WakeWords {
     private val lockedPrefixes = listOf("torch-", "volume-", "media-", "ringer-", "dnd-", "rotate-")
     private val lockedIds = setOf(
         "mute", "unmute", "brightness", "info-battery", "info-time", "info-date", "info-storage",
-        "info-memory", "info-temperature", "info-uptime", "info-device",
+        "info-memory", "info-temperature", "info-uptime", "info-device", "call-answer", "call-end",
     )
 
     fun allowedHandsFree(id: String, hintOnly: Boolean): Boolean =

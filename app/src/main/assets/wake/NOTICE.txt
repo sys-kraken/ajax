@@ -1,0 +1,5 @@
+melspectrogram.tflite and embedding_model.tflite come from openWakeWord
+(https://github.com/dscripka/openWakeWord), Apache License 2.0. The embedding model is based on
+Google's speech_embedding model (Apache License 2.0).
+
+ajax.json is Ajax's own "Ajax" detector, trained on synthetic voices plus the owner's recordings.

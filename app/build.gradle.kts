@@ -57,5 +57,7 @@ dependencies {
     // Offline speech for the "Ajax" wake word; its model is downloaded once, like the language model.
     implementation("com.alphacephei:vosk-android:0.3.75@aar")
     implementation("net.java.dev.jna:jna:5.18.1@aar")
+    // Runs the "Ajax" detector's feature models (openWakeWord's mel spectrogram and speech embedding).
+    implementation("org.tensorflow:tensorflow-lite:2.17.0")
     testImplementation("junit:junit:4.13.2")
 }

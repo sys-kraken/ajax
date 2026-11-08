@@ -35,6 +35,13 @@ class WakeWordsTest {
         assertTrue("ajax" in WakeWords.phrases)
     }
 
+    @Test fun ajaxInsideOtherSoundWhileAudioPlays() {
+        assertTrue(WakeWords.containsWake("[unk] ajax [unk]"))
+        assertTrue(WakeWords.containsWake("ajax is"))
+        assertFalse(WakeWords.containsWake("[unk] lou most"))
+        assertFalse(WakeWords.containsWake("ajaxes"))
+    }
+
     @Test fun wordsInsideASentenceDoNothing() {
         assertNull(WakeWords.match("i told ajax about it"))
         assertNull(WakeWords.match("where is the flashlight"))

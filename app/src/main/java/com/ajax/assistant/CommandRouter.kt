@@ -87,9 +87,17 @@ object CommandRouter {
     fun route(raw: String): Match? {
         val t = normalize(raw)
         if (t.isEmpty()) return null
+        // "Turn it back on", "call him back": fill in what "it" or "him" was, then route that.
+        Memory.resolve(t, appsJustListed = Actions.lastListedApps() != null)?.let { resolved ->
+            routeNormalized(resolved, resolved)?.let { return it }
+        }
+        return routeNormalized(raw, t)
+    }
+
+    private fun routeNormalized(raw: String, t: String): Match? {
         return sms(raw) ?: draft(raw) ?: spell(t) ?: volume(t) ?: media(t) ?: ringer(t) ?: torch(t) ?: rotate(t) ?: toggle(t) ?: brightness(t) ?: dnd(t)
             ?: nav(t) ?: stopApps(t) ?: screen(t) ?: info(t) ?: alarm(t) ?: timer(t) ?: camera(t) ?: search(t)
-            ?: navigate(t) ?: appInfo(t) ?: settings(t) ?: call(t) ?: openApp(t)
+            ?: navigate(t) ?: appInfo(t) ?: settings(t) ?: phoneCall(t) ?: call(t) ?: openApp(t)
     }
 
     /** Spells are other names for ordinary commands, including what speech recognition makes of them. */
@@ -236,10 +244,10 @@ object CommandRouter {
         val on = Regex("\\b(?:on|need|want)\\b").containsMatchIn(t)
         val off = Regex("\\b(?:off|kill|stop|cut)\\b").containsMatchIn(t)
         return when {
-            on && !off -> done("torch-on") { Actions.torch(it, true) }
-            off && !on -> done("torch-off") { Actions.torch(it, false) }
+            on && !off -> done("torch-on") { Memory.rememberToggle("flashlight"); Actions.torch(it, true) }
+            off && !on -> done("torch-off") { Memory.rememberToggle("flashlight"); Actions.torch(it, false) }
             Regex("^(?:toggle |switch )?(?:the )?(?:flashlight|flash light|torch)$").matches(t) ->
-                done("torch-toggle") { Actions.torchToggle(it) }
+                done("torch-toggle") { Memory.rememberToggle("flashlight"); Actions.torchToggle(it) }
             else -> hint("torch-unclear", "Say flashlight on, or flashlight off.")
         }
     }
@@ -292,6 +300,7 @@ object CommandRouter {
         val tg = toggleFor(m.first) ?: return null
         val wantOn = m.second == "on"
         return Match("toggle:${tg.pretty}:${m.second}") {
+            Memory.rememberToggle(m.first)
             val now = tg.state?.invoke(it)
             if (now == wantOn) {
                 Outcome.Done(Result(true, "${tg.pretty} is already ${m.second}"))
@@ -394,6 +403,9 @@ object CommandRouter {
 
     private fun stopApps(t: String): Match? {
         // "terminate it" right after Ajax listed the background apps means those apps.
+        if (Regex("^(?:$STOP) (?:it|that|this)$").matches(t) && Actions.lastListedApps() == null) {
+            return hint("force-stop-which", "Which app should I stop? Say force stop and the app's name.")
+        }
         if (Regex("^(?:$STOP) (?:it|them|those|these|that|all of them|all of those|everything|all)$").matches(t) ||
             Regex("^(?:$STOP) (?:all )?(?:the |my )?(?:background|running|open) (?:apps|applications|processes)$").matches(t) ||
             Regex("^(?:$STOP) all (?:the |my )?(?:apps|applications)$").matches(t)
@@ -409,6 +421,7 @@ object CommandRouter {
         if (name in setOf("phone", "the phone", "device", "screen", "music", "it", "this", "that", "call", "timer", "alarm")) return null
         return Match("force-stop-app", sure = { Actions.hasApp(it, name) }) { ctx ->
             val pkg = Actions.findPackage(ctx, name) ?: return@Match Outcome.Done(Result(false, "I couldn't find an app called $name."))
+            Memory.rememberApp(name)
             askToStop(ctx, listOf(pkg))
         }
     }
@@ -514,7 +527,7 @@ object CommandRouter {
         val name = m.groupValues[1].trim().trim('.', ',')
         val message = m.groupValues[2].trim()
         if (name.isEmpty() || message.isEmpty()) return null
-        return Match("text") { Actions.prepareText(it, name, message) }
+        return Match("text") { Memory.rememberContact(name); Actions.prepareText(it, name, message) }
     }
 
     /** Opens the messaging app with the message filled in; the user sends it. The body is optional. */
@@ -526,7 +539,16 @@ object CommandRouter {
         val name = m.groupValues[1].trim().trim('.', ',')
         val message = m.groupValues[2].trim()
         if (name.isEmpty()) return null
-        return done("draft") { Actions.draftText(it, name, message) }
+        return done("draft") { Memory.rememberContact(name); Actions.draftText(it, name, message) }
+    }
+
+    /** Answering or ending a call that is ringing or under way. */
+    private fun phoneCall(t: String): Match? = when {
+        Regex("^(?:answer|pick up|accept|take)(?: the| this| my)? (?:call|phone)$|^answer it$|^pick up$|^answer$").matches(t) ->
+            done("call-answer") { CallVoice.answerNow(it) }
+        Regex("^(?:hang up|end (?:the |this )?call|decline (?:the |this )?call|reject (?:the |this )?call|decline|reject)$").matches(t) ->
+            done("call-end") { CallVoice.endNow(it) }
+        else -> null
     }
 
     private fun call(t: String): Match? {
@@ -535,7 +557,7 @@ object CommandRouter {
         if (Regex("^[0-9 ]+$").matches(who)) {
             return hint("call-number", "Calling phone numbers isn't supported yet. Say a contact name.")
         }
-        return done("call") { Actions.call(it, who) }
+        return done("call") { Memory.rememberContact(who); Actions.call(it, who) }
     }
 
     // ---- Settings pages and apps -------------------------------------------------------------
@@ -545,7 +567,7 @@ object CommandRouter {
             ?: Regex("^(?:open |show )?(.+) app info$").matchEntire(t)
             ?: return null
         val name = m.groupValues[1].trim()
-        return Match("app-info", sure = { Actions.hasApp(it, name) }) { Outcome.Done(Actions.appInfo(it, name)) }
+        return Match("app-info", sure = { Actions.hasApp(it, name) }) { Memory.rememberApp(name); Outcome.Done(Actions.appInfo(it, name)) }
     }
 
     private fun settings(t: String): Match? {
@@ -565,6 +587,6 @@ object CommandRouter {
         val m = Regex("^(?:open|launch|start|run) (?:the )?(.+?)(?: app)?$").matchEntire(t) ?: return null
         val name = m.groupValues[1].trim()
         // "start a timer for five minutes" also matches here: only sure if such an app exists.
-        return Match("open-app", sure = { Actions.hasApp(it, name) }) { Outcome.Done(Actions.openApp(it, name)) }
+        return Match("open-app", sure = { Actions.hasApp(it, name) }) { Memory.rememberApp(name); Outcome.Done(Actions.openApp(it, name)) }
     }
 }

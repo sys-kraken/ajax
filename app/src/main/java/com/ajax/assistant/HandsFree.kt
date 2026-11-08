@@ -18,13 +18,16 @@ object HandsFree : SpeechInput.Callback {
     private var speech: SpeechInput? = null
     private var speaker: Speaker? = null
     private var brain: Brain? = null
+    private var appCtx: Context? = null
 
     fun start(ctx: Context, locked: Boolean) {
         if (active) return
         val app = ctx.applicationContext
+        appCtx = app
         active = true
         this.locked = locked
         MicGuard.hold(this, maxMs = 120_000)
+        MicGuard.quietMedia(app, true)
         speaker = Speaker(app)
         speech = SpeechInput(app, this)
         brain = Brain(app).apply {
@@ -89,5 +92,6 @@ object HandsFree : SpeechInput.Callback {
         speaker?.shutdown(); speaker = null
         brain = null
         MicGuard.release(this)
+        appCtx?.let { MicGuard.quietMedia(it, false) }
     }
 }

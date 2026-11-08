@@ -132,6 +132,7 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
         brain.reset()
         active = true
         MicGuard.hold(this)
+        MicGuard.quietMedia(ctx, true)
         showCount++
         if (!resuming) {
             followUpUntil = 0L
@@ -153,6 +154,7 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
     override fun onHide() {
         active = false
         MicGuard.release(this)
+        MicGuard.quietMedia(ctx, false)
         main.removeCallbacksAndMessages(null)
         speech.destroy()
         speaker.stop()
@@ -162,6 +164,7 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
     override fun onDestroy() {
         active = false
         MicGuard.release(this)
+        MicGuard.quietMedia(ctx, false)
         showCount++
         main.removeCallbacksAndMessages(null)
         speech.destroy()
