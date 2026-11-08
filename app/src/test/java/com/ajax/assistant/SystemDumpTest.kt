@@ -15,6 +15,20 @@ class SystemDumpTest {
         assertEquals(listOf("com.ajax.assistant", "com.sec.android.app.voicenote"), SystemDump.recordingPackages(report))
     }
 
+    @Test fun appsBehindSessionsEvenAfterTheyStopped() {
+        val report = """
+            Recording activity:
+              session:345 -- source client=VOICE_RECOGNITION -- uid:10398 -- patch:57 -- pack:com.ajax.assistant -- format
+            Events log: recording activity received by AudioService
+            11-09 02:26:55:062 rec start riid:6495 uid:10270 session:8369 src:VOICE_RECOGNITION not silenced pack:com.google.android.tts
+            11-09 02:26:56:207 rec stop riid:6495 uid:10270 session:8369 src:VOICE_RECOGNITION not silenced pack:com.google.android.tts
+            11-09 02:24:46:666 rec start riid:6399 uid:10327 session:8249 src:MIC not silenced pack:com.sec.android.app.voicenote
+        """.trimIndent()
+        assertEquals(listOf("com.google.android.tts"), SystemDump.packagesForSessions(report, setOf(8369)))
+        assertEquals(listOf("com.sec.android.app.voicenote", "com.google.android.tts"), SystemDump.packagesForSessions(report, setOf(8249, 8369)).sortedDescending())
+        assertEquals(emptyList<String>(), SystemDump.packagesForSessions(report, setOf(1)))
+    }
+
     @Test fun backgroundAppsFromTheProcessList() {
         val report = """
             ACTIVITY MANAGER LRU PROCESSES (dumpsys activity lru)

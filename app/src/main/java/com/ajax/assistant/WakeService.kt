@@ -34,6 +34,7 @@ class WakeService : Service() {
         private const val CHANNEL = "listening"
         private const val NOTIFICATION_ID = 6
         private const val ACTION_STOP = "com.ajax.assistant.STOP_WAKE"
+        private const val ACTION_REPOST = "com.ajax.assistant.REPOST_WAKE"
         private const val RATE = Spotter.RATE
         /**
          * Apps that refuse to record while anyone else is (Samsung's Voice Recorder says "Other
@@ -155,6 +156,11 @@ class WakeService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        if (intent?.action == ACTION_REPOST && running) {
+            // Swiped away: Android 14+ lets you dismiss even a running service's notification. Put it
+            // straight back, so you can always see Ajax is listening and stop it from there.
+            getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID, buildNotification())
+        }
         return START_STICKY
     }
 
@@ -176,6 +182,12 @@ class WakeService : Service() {
         if (Build.VERSION.SDK_INT >= 26) {
             nm.createNotificationChannel(NotificationChannel(CHANNEL, "Listening for Ajax", NotificationManager.IMPORTANCE_LOW))
         }
+        val n = buildNotification()
+        if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+        else startForeground(NOTIFICATION_ID, n)
+    }
+
+    private fun buildNotification(): Notification {
         val open = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
         )
@@ -183,7 +195,10 @@ class WakeService : Service() {
             this, 1, Intent(this, WakeService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE,
         )
         @Suppress("DEPRECATION")
-        val n = (if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL) else Notification.Builder(this))
+        val repost = PendingIntent.getService(
+            this, 3, Intent(this, WakeService::class.java).setAction(ACTION_REPOST), PendingIntent.FLAG_IMMUTABLE,
+        )
+        return (if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL) else Notification.Builder(this))
             .setSmallIcon(R.drawable.ic_stat_ajax)
             .setColor(0xFFA5C736.toInt())
             .setLargeIcon(android.graphics.drawable.Icon.createWithResource(this, R.drawable.ic_notification_large))
@@ -191,9 +206,8 @@ class WakeService : Service() {
             .setContentIntent(open)
             .addAction(Notification.Action.Builder(null, "Stop", stop).build())
             .setOngoing(true)
+            .setDeleteIntent(repost)
             .build()
-        if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
-        else startForeground(NOTIFICATION_ID, n)
     }
 
     /** Pause while Ajax is listening or talking; resume a little after it goes quiet. */

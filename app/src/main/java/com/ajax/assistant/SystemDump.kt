@@ -37,6 +37,15 @@ object SystemDump {
         Regex("""^\s+session:\d+ .*?-- pack:([\w.]+)""", RegexOption.MULTILINE)
             .findAll(report).map { it.groupValues[1] }.distinct().toList()
 
+    /** The apps behind these recording sessions: running ones first, then the recent history. */
+    fun packagesForSessions(report: String, sessions: Set<Int>): List<String> {
+        val found = LinkedHashSet<String>()
+        for (m in Regex("""session:(\d+)\b.*?pack:([\w.]+)""").findAll(report)) {
+            if (m.groupValues[1].toIntOrNull() in sessions) found += m.groupValues[2]
+        }
+        return found.toList()
+    }
+
     /**
      * Apps running in the background, from the process list: those running a service, a foreground
      * service (music, navigation, recording) or a background job. Cached apps are only kept in memory

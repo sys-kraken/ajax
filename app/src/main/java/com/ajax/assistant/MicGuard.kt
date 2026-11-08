@@ -175,7 +175,7 @@ object MicGuard {
             }
         }
         // Calls are on screen anyway: no warning for them.
-        if (call || expected()) return
+        if (call) return
         // Ajax's own speech recognition runs in another app (Google), so it can't be told apart:
         // ignore recordings while Ajax is listening, and look again once it has finished.
         if (!quietFor(GRACE_MS)) return
@@ -188,25 +188,24 @@ object MicGuard {
         val fresh = others - alerted
         if (fresh.isNotEmpty()) {
             alerted.addAll(fresh)
-            nameAndNotify(app)
+            nameAndNotify(app, fresh)
         }
-        if (others.isEmpty()) app.getSystemService(NotificationManager::class.java)?.cancel(NOTIFICATION_ID)
+        // The warning stays after the recording ends, so a short one isn't missed.
     }
 
     private val namer: Handler by lazy { Handler(android.os.HandlerThread("ajax-mic-names").apply { start() }.looper) }
 
-    /**
-     * Names the app from Android's audio report when Ajax may read it. An app on screen is left out:
-     * you can see it, so a warning would only get in the way.
-     */
-    private fun nameAndNotify(ctx: Context) {
+    /** Names the app from Android's audio report when Ajax may read it. */
+    private fun nameAndNotify(ctx: Context, sessions: Set<Int>) {
         if (!SystemDump.allowed(ctx)) { notify(ctx, null); return }
         namer.post {
-            val pkgs = SystemDump.read(ctx, "audio")?.let { SystemDump.recordingPackages(it) }
+            // By session, from the recordings still running or the audio service's recent history,
+            // so a recording that has already ended by now is still named.
+            val pkgs = SystemDump.read(ctx, "audio")?.let { SystemDump.packagesForSessions(it, sessions) }
             main.post {
                 if (pkgs == null) { notify(ctx, null); return@post }
-                val front = Foreground.app(ctx)
-                val shown = pkgs.filter { it != ctx.packageName && it != front }
+                // Every app but Ajax, even the one on screen: you asked to always be told.
+                val shown = pkgs.filter { it != ctx.packageName }
                 if (shown.isNotEmpty()) notify(ctx, shown)
             }
         }
