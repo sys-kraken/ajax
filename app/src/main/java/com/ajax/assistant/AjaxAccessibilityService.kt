@@ -20,6 +20,9 @@ class AjaxAccessibilityService : AccessibilityService() {
     companion object {
         @Volatile var instance: AjaxAccessibilityService? = null
 
+        /** More than this in one go takes too long; the rest can be asked for again. */
+        const val MAX_FORCE_STOP = 10
+
         /**
          * Shows and speaks a result from a command that ran after the overlay closed. [then] runs once
          * the command has fully finished (a blank result means it is still running and reports later).
@@ -150,6 +153,89 @@ class AjaxAccessibilityService : AccessibilityService() {
             count >= 4 || tries >= 40 -> say(Result(false, "I pressed $button but the phone didn't react. Tap it yourself."))
             else -> handler.postDelayed({ pressInMenu(button, first, at, count, tries + 1) }, if (pressed) 1000L else 250L)
         }
+    }
+
+    /**
+     * Force stops each app the way you would: opens its App info page, presses Force stop, then
+     * confirms. Android has no other way for an ordinary app to do it. Reports the outcome itself.
+     */
+    fun forceStop(pkgs: List<String>): Result {
+        handler.removeCallbacksAndMessages(null)
+        stopNext(pkgs.take(MAX_FORCE_STOP), 0, ArrayList(), ArrayList())
+        return Result(true, "")
+    }
+
+    private fun stopNext(pkgs: List<String>, i: Int, stopped: MutableList<String>, failed: MutableList<String>) {
+        if (i >= pkgs.size) {
+            performGlobalAction(GLOBAL_ACTION_HOME)
+            val parts = listOfNotNull(
+                stopped.takeIf { it.isNotEmpty() }?.let { "Stopped ${SystemDump.names(this, it)}." },
+                failed.takeIf { it.isNotEmpty() }?.let { "Couldn't stop ${SystemDump.names(this, it)}." },
+            )
+            say(Result(failed.isEmpty(), parts.joinToString(" ")))
+            return
+        }
+        val pkg = pkgs[i]
+        val next = { ok: Boolean -> (if (ok) stopped else failed).add(pkg); stopNext(pkgs, i + 1, stopped, failed) }
+        try {
+            startActivity(
+                android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.fromParts("package", pkg, null))
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK),
+            )
+        } catch (e: Exception) {
+            next(false)
+            return
+        }
+        handler.postDelayed({ pressForceStop(null, 0, next) }, 600)
+    }
+
+    /** Step 1 ([pageButton] null): press Force stop on the page. Step 2: press the confirmation. */
+    private fun pressForceStop(pageButton: Rect?, tries: Int, done: (Boolean) -> Unit) {
+        if (pageButton == null) {
+            val b = findButton("Force stop", avoid = null)
+            when {
+                b != null && !b.isEnabled -> done(true) // already stopped: the button is greyed out
+                b != null -> {
+                    val at = Rect().also { b.getBoundsInScreen(it) }
+                    if (b.performAction(AccessibilityNodeInfo.ACTION_CLICK)) handler.postDelayed({ pressForceStop(at, 0, done) }, 500)
+                    else done(false)
+                }
+                tries >= 20 -> done(false)
+                else -> handler.postDelayed({ pressForceStop(null, tries + 1, done) }, 250)
+            }
+            return
+        }
+        // The confirmation says OK on some phones and Force stop on others (a second, different button).
+        val confirm = findButton("OK", avoid = null) ?: findButton("Force stop", avoid = pageButton)
+        when {
+            confirm != null -> {
+                confirm.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                handler.postDelayed({ done(true) }, 700)
+            }
+            // No dialog and the page button is now greyed out: stopped without asking.
+            findButton("Force stop", avoid = null)?.isEnabled == false -> done(true)
+            tries >= 12 -> done(false)
+            else -> handler.postDelayed({ pressForceStop(pageButton, tries + 1, done) }, 250)
+        }
+    }
+
+    /** The control showing [label] (or its clickable parent), in any window but Ajax's, not at [avoid]. */
+    private fun findButton(label: String, avoid: Rect?): AccessibilityNodeInfo? {
+        val roots = (windows.mapNotNull { it.root } + listOfNotNull(rootInActiveWindow))
+            .filter { it.packageName?.toString() != packageName }
+        for (root in roots) {
+            for (n in root.findAccessibilityNodeInfosByText(label)) {
+                val text = listOfNotNull(n.text, n.contentDescription).joinToString(" ").trim().trimEnd(',', '.')
+                if (!text.equals(label, ignoreCase = true) || !n.isVisibleToUser) continue
+                var target: AccessibilityNodeInfo? = n
+                while (target != null && !target.isClickable) target = target.parent
+                val hit = target ?: n
+                val at = Rect().also { hit.getBoundsInScreen(it) }
+                if (avoid != null && at == avoid) continue
+                return hit
+            }
+        }
+        return null
     }
 
     private fun touch(at: Rect) {

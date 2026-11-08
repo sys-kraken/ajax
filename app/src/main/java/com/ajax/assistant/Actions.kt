@@ -319,6 +319,44 @@ object Actions {
 
     fun date(): Result = Result(true, "Today is " + SimpleDateFormat("EEEE, MMMM d", Locale.getDefault()).format(Date()))
 
+    const val NEEDS_DUMP = "Android only shows that to system apps. Connect the phone to the PC once and I can grant it."
+
+    private var listed: List<String> = emptyList()
+    private var listedAt = 0L
+
+    /** The apps Ajax just named as running in the background, for "terminate them" (2 minutes). */
+    fun lastListedApps(): List<String>? =
+        listed.takeIf { it.isNotEmpty() && android.os.SystemClock.uptimeMillis() - listedAt < 120_000 }
+
+    /** Apps you can open that are doing work in the background; null without the PC-granted permission. */
+    fun backgroundUserApps(ctx: Context): List<String>? {
+        val report = SystemDump.read(ctx, "activity", "lru") ?: return null
+        return SystemDump.backgroundPackages(report).filter { it != ctx.packageName && SystemDump.isUserApp(ctx, it) }
+    }
+
+    fun findPackage(ctx: Context, name: String): String? = findApp(ctx, name)?.pkg
+
+    /** Apps doing work in the background (services, music, navigation, downloads), by name. */
+    fun runningApps(ctx: Context): Result {
+        val pkgs = backgroundUserApps(ctx) ?: return Result(false, NEEDS_DUMP)
+        listed = pkgs
+        listedAt = android.os.SystemClock.uptimeMillis()
+        if (pkgs.isEmpty()) return Result(true, "No apps are running in the background right now.")
+        val shown = pkgs.take(8)
+        val more = if (pkgs.size > shown.size) ", and ${pkgs.size - shown.size} more" else ""
+        return Result(true, "Running in the background: ${SystemDump.names(ctx, shown)}$more.")
+    }
+
+    /** Which apps are recording from the microphone right now. */
+    fun micUsers(ctx: Context): Result {
+        val report = SystemDump.read(ctx, "audio") ?: return Result(false, NEEDS_DUMP)
+        // Ajax itself, and the speech service it just used to hear this question, don't count.
+        val ajaxSpeech = setOfNotNull(ctx.packageName, Recognizers.delegate(ctx)?.packageName, "com.google.android.as", "com.google.android.tts")
+        val pkgs = SystemDump.recordingPackages(report).filter { it !in ajaxSpeech }
+        return if (pkgs.isEmpty()) Result(true, "No other app is using the microphone.")
+        else Result(true, "${SystemDump.names(ctx, pkgs)} ${if (pkgs.size == 1) "is" else "are"} using the microphone.")
+    }
+
     fun readNotifications(ctx: Context): Result {
         val enabled = Settings.Secure.getString(ctx.contentResolver, "enabled_notification_listeners")
             ?.contains(ctx.packageName) == true

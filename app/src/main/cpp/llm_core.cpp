@@ -74,9 +74,21 @@ bool complete(Session *s, const std::string &prefix, const std::string &suffix, 
         llama_memory_clear(mem, true);
         s->prefix.clear();
     }
+    if (s->prefix.empty() && !s->cachePath.empty()) {
+        // Reading the saved prefix back takes a fraction of a second; evaluating it takes several.
+        std::vector<llama_token> saved(pre.size() + 16);
+        size_t n = 0;
+        if (llama_state_seq_load_file(s->ctx, s->cachePath.c_str(), 0, saved.data(), saved.size(), &n) > 0 &&
+            n == pre.size() && std::equal(pre.begin(), pre.end(), saved.begin())) {
+            s->prefix = pre;
+        } else {
+            llama_memory_clear(mem, true);
+        }
+    }
     if (s->prefix.empty()) {
         if (!decode(s->ctx, pre)) { llama_memory_clear(mem, true); return false; }
         s->prefix = pre;
+        if (!s->cachePath.empty()) llama_state_seq_save_file(s->ctx, s->cachePath.c_str(), 0, pre.data(), pre.size());
     }
 
     llama_sampler *smpl = llama_sampler_chain_init(llama_sampler_chain_default_params());

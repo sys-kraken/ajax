@@ -21,6 +21,12 @@ Java_com_ajax_assistant_LlamaNative_load(JNIEnv *env, jobject, jstring path, jin
 }
 
 extern "C" JNIEXPORT void JNICALL
+Java_com_ajax_assistant_LlamaNative_setCache(JNIEnv *env, jobject, jlong handle, jstring path) {
+    auto *s = reinterpret_cast<ajax::Session *>(handle);
+    if (s) s->cachePath = utf8(env, path);
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_com_ajax_assistant_LlamaNative_free(JNIEnv *, jobject, jlong handle) {
     ajax::close(reinterpret_cast<ajax::Session *>(handle));
 }

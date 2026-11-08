@@ -14,6 +14,9 @@ object LlamaNative {
     external fun load(path: String, threads: Int): Long
     external fun free(handle: Long)
 
+    /** Saves the evaluated prompt prefix to [path] and reuses it after the model is reloaded. */
+    external fun setCache(handle: Long, path: String)
+
     /**
      * Greedy completion of [prefix]+[suffix] restricted to [grammar] (GBNF, root "root"). The prefix
      * is cached between calls, so keep it identical. Null on failure.

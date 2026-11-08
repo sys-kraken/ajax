@@ -14,6 +14,7 @@ struct Session {
     llama_model *model = nullptr;
     llama_context *ctx = nullptr;
     std::vector<llama_token> prefix; // tokens currently cached at positions [0, prefix.size())
+    std::string cachePath;           // where the evaluated prefix is saved between model loads; empty = don't
 };
 
 /** Loads a GGUF model (CPU only). Returns nullptr on failure; free with close(). */

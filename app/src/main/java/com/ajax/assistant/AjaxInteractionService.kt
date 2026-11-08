@@ -19,6 +19,8 @@ class AjaxInteractionService : VoiceInteractionService() {
     override fun onReady() {
         super.onReady()
         ready = this
+        // Android binds the assistant at startup: resume wake word listening if it was on.
+        if (WakeService.enabled(this) && !WakeService.running && !WakeService.start(this)) WakeService.askToResume(this)
     }
 
     override fun onShutdown() {

@@ -15,6 +15,15 @@ object IntentModel {
 
     fun available(ctx: Context): Boolean = ModelManager.isReady(ctx)
 
+    /**
+     * Gets the model loaded and its instructions read while the user is still speaking, so the
+     * answer is quick when it is needed. Does nothing if the model isn't downloaded.
+     */
+    fun warm(ctx: Context) {
+        if (!available(ctx)) return
+        ModelManager.complete(ctx, Catalog.prefix, Catalog.suffix("hello"), Catalog.grammar("hello"), maxTokens = 0) {}
+    }
+
     /** [done] receives a canonical phrase the router accepts, or null. Main thread. */
     fun interpret(ctx: Context, heard: String, done: (String?) -> Unit) {
         val request = CommandRouter.normalize(heard)

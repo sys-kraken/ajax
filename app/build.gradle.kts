@@ -54,5 +54,8 @@ android {
 }
 
 dependencies {
+    // Offline speech for the "Ajax" wake word; its model is downloaded once, like the language model.
+    implementation("com.alphacephei:vosk-android:0.3.75@aar")
+    implementation("net.java.dev.jna:jna:5.18.1@aar")
     testImplementation("junit:junit:4.13.2")
 }

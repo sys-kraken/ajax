@@ -23,7 +23,8 @@ object ModelManager {
     /** Checked in CI by .github/workflows/model-hash.yml against the real file. */
     const val SHA256 = "7671c0c304e6ce5a7fc577bcb12aba01e2c155cc2efd29b2213c95b18edaf6ed"
 
-    private const val IDLE_MS = 60_000L
+    // Kept loaded for a while after use: loading costs seconds, keeping it costs only memory.
+    private const val IDLE_MS = 5 * 60_000L
 
     sealed class State {
         object Missing : State()
@@ -182,11 +183,16 @@ object ModelManager {
         worker.post {
             worker.removeCallbacks(unload)
             val out = try {
+                val started = android.os.SystemClock.uptimeMillis()
                 if (handle == 0L && isReady(app)) {
                     val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
                     handle = LlamaNative.load(file(app).absolutePath, threads)
+                    if (handle != 0L) LlamaNative.setCache(handle, java.io.File(app.cacheDir, "prompt-$SHA256.kv").absolutePath)
                 }
-                if (handle == 0L) null else LlamaNative.complete(handle, prefix, suffix, grammar, maxTokens)
+                val loaded = android.os.SystemClock.uptimeMillis()
+                val result = if (handle == 0L) null else LlamaNative.complete(handle, prefix, suffix, grammar, maxTokens)
+                android.util.Log.i("AjaxLlm", "load ${loaded - started} ms, answer ${android.os.SystemClock.uptimeMillis() - loaded} ms")
+                result
             } catch (e: Throwable) {
                 null
             }

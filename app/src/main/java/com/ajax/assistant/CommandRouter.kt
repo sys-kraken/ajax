@@ -88,7 +88,7 @@ object CommandRouter {
         val t = normalize(raw)
         if (t.isEmpty()) return null
         return sms(raw) ?: draft(raw) ?: spell(t) ?: volume(t) ?: media(t) ?: ringer(t) ?: torch(t) ?: rotate(t) ?: toggle(t) ?: brightness(t) ?: dnd(t)
-            ?: nav(t) ?: screen(t) ?: info(t) ?: alarm(t) ?: timer(t) ?: camera(t) ?: search(t)
+            ?: nav(t) ?: stopApps(t) ?: screen(t) ?: info(t) ?: alarm(t) ?: timer(t) ?: camera(t) ?: search(t)
             ?: navigate(t) ?: appInfo(t) ?: settings(t) ?: call(t) ?: openApp(t)
     }
 
@@ -388,6 +388,42 @@ object CommandRouter {
         else -> null
     }
 
+    // ---- Stopping apps (Accessibility presses Force stop in each app's info page) -----------------
+
+    private const val STOP = "terminate|kill|force stop|force close|force quit|close|quit|end"
+
+    private fun stopApps(t: String): Match? {
+        // "terminate it" right after Ajax listed the background apps means those apps.
+        if (Regex("^(?:$STOP) (?:it|them|those|these|that|all of them|all of those|everything|all)$").matches(t) ||
+            Regex("^(?:$STOP) (?:all )?(?:the |my )?(?:background|running|open) (?:apps|applications|processes)$").matches(t) ||
+            Regex("^(?:$STOP) all (?:the |my )?(?:apps|applications)$").matches(t)
+        ) {
+            return Match("force-stop-listed") { ctx ->
+                val pkgs = Actions.lastListedApps() ?: Actions.backgroundUserApps(ctx)
+                    ?: return@Match Outcome.Done(Result(false, Actions.NEEDS_DUMP))
+                if (pkgs.isEmpty()) return@Match Outcome.Done(Result(true, "No apps are running in the background."))
+                askToStop(ctx, pkgs)
+            }
+        }
+        val name = Regex("^(?:$STOP) (?:the )?(.+?)(?: app)?$").matchEntire(t)?.groupValues?.get(1) ?: return null
+        if (name in setOf("phone", "the phone", "device", "screen", "music", "it", "this", "that", "call", "timer", "alarm")) return null
+        return Match("force-stop-app", sure = { Actions.hasApp(it, name) }) { ctx ->
+            val pkg = Actions.findPackage(ctx, name) ?: return@Match Outcome.Done(Result(false, "I couldn't find an app called $name."))
+            askToStop(ctx, listOf(pkg))
+        }
+    }
+
+    private fun askToStop(ctx: Context, pkgs: List<String>): Outcome {
+        Access.refusal(ctx)?.let { return Outcome.Done(it) }
+        val shown = pkgs.take(AjaxAccessibilityService.MAX_FORCE_STOP)
+        return Outcome.Ask(
+            "Force stop ${SystemDump.names(ctx, shown)}? Anything unsaved in ${if (shown.size == 1) "it" else "them"} is lost.",
+            endsConversation = true,
+        ) {
+            Outcome.AfterHide("Stopping") { AjaxAccessibilityService.instance?.forceStop(shown) ?: serviceStopped }
+        }
+    }
+
     // ---- Info --------------------------------------------------------------------------------
 
     /** A question ("what's…", "how much…", "is my…", "do you…"), as opposed to a command. */
@@ -397,9 +433,34 @@ object CommandRouter {
 
     private fun info(t: String): Match? {
         val q = question.containsMatchIn(t)
+        val apps = "apps?|applications?|programs?"
+        val phone = "phone|device|mobile|system|cpu|processor"
         return when {
-            Regex("^battery(?: level| status| percentage)?$").matches(t) ||
-                q && has(t, "battery|charged|charge") && !has(t, "saver|saving|save|settings") ->
+            Regex("^(?:(?:give me |show me |run |do )?(?:an? |the )?(?:full )?)?(?:system|phone|device|status|health)(?: status| health)? (?:report|status|check|info|information|summary|diagnostics?)$").matches(t) ||
+                Regex("^(?:system|phone|device) (?:report|status)$|^diagnostics?$|^status report$|^health check$").matches(t) ||
+                q && has(t, "phone|device") && has(t, "status|doing|health|condition") ->
+                done("info-system-report") { DeviceInfo.report(it) }
+            has(t, "ram|memory") && !has(t, "settings|storage|card") ->
+                done("info-memory") { DeviceInfo.memory(it) }
+            has(t, "temperature|temp|overheating|overheat") && !has(t, "outside|weather|settings") ||
+                q && has(t, "hot|warm") && has(t, phone) ->
+                done("info-temperature") { DeviceInfo.temperature(it) }
+            has(t, "uptime") || q && has(t, "long") && has(t, phone) && has(t, "on|running|been") ||
+                has(t, "last (?:restart|reboot|restarted|rebooted)") ->
+                done("info-uptime") { DeviceInfo.uptime() }
+            has(t, "android version|software version|security patch|phone model|model number|about (?:this |my )?phone") ||
+                q && has(t, "phone|device") && has(t, "model|version|which|what") && !has(t, "status|doing|health|condition|hot|warm|memory|storage|battery") ->
+                done("info-device") { DeviceInfo.device(it) }
+            q && has(t, "internet|online|connected|network|vpn|connection") && !has(t, "settings") ||
+                Regex("^(?:network|internet|connection) (?:status|check|info)$").matches(t) ->
+                done("info-network") { DeviceInfo.network(it) }
+            has(t, apps) && has(t, "running|open|active|background") && !has(t, "settings") ||
+                Regex("^background (?:apps|applications|processes)$").matches(t) ->
+                done("info-running-apps") { Actions.runningApps(it) }
+            has(t, "microphone|mic") && (q || has(t, "who|which|listening|recording|using")) && !has(t, "settings") ->
+                done("info-mic-users") { Actions.micUsers(it) }
+            has(t, "battery") && !has(t, "saver|saving|save|settings|usage|optimi[sz]\\w*|health") ||
+                q && has(t, "charged|charge") && !has(t, "settings") ->
                 done("info-battery") { Actions.battery(it) }
             Regex("^(?:time|current time)$").matches(t) ||
                 q && has(t, "time") && !has(t, "timer|settings|zone|alarm") ->
@@ -411,7 +472,7 @@ object CommandRouter {
                 q && has(t, "notifications|new messages") ->
                 done("info-notifications") { Actions.readNotifications(it) }
             q && has(t, "storage|space") || Regex("running out of (?:space|storage)").containsMatchIn(t) ->
-                done("info-storage") { Actions.storage() }
+                done("info-storage") { DeviceInfo.storage() }
             else -> null
         }
     }

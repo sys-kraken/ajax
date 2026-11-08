@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status bar icon: Android draws it in one colour. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#FFFFFFFF" android:pathData="M3.25,2.00h1.30v1.30h-1.30zM19.50,2.00h1.30v1.30h-1.30zM4.50,3.25h1.30v1.30h-1.30zM18.25,3.25h1.30v1.30h-1.30zM5.75,4.50h1.30v1.30h-1.30zM9.50,4.50h5.05v1.30h-5.05zM17.00,4.50h1.30v1.30h-1.30zM7.00,5.75h10.05v1.30h-10.05zM5.75,7.00h12.55v1.30h-12.55zM4.50,8.25h3.80v1.30h-3.80zM9.50,8.25h5.05v1.30h-5.05zM15.75,8.25h3.80v1.30h-3.80zM4.50,9.50h15.05v1.30h-15.05zM3.25,10.75h17.55v1.30h-17.55zM3.25,13.25h17.55v1.30h-17.55zM3.25,14.50h17.55v1.30h-17.55zM3.25,15.75h3.80v1.30h-3.80zM17.00,15.75h3.80v1.30h-3.80z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M7.00,17.00h2.55v1.30h-2.55zM10.75,17.00h2.55v1.30h-2.55zM14.50,17.00h2.55v1.30h-2.55zM5.75,18.25h1.30v1.30h-1.30zM17.00,18.25h1.30v1.30h-1.30z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M7.00,18.25h2.55v1.30h-2.55zM10.75,18.25h2.55v1.30h-2.55zM14.50,18.25h2.55v1.30h-2.55zM5.75,19.50h12.55v1.30h-12.55zM7.00,20.75h10.05v1.30h-10.05z" />
+</vector>

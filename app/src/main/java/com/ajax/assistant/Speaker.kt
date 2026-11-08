@@ -41,9 +41,13 @@ class Speaker(ctx: Context) : TextToSpeech.OnInitListener {
     /** Speaks [text]; [onDone] runs afterwards (immediately if speech is off). */
     fun speak(text: String, onDone: (() -> Unit)? = null) {
         if (text.isBlank() || !enabled || failed) {
+            MicGuard.release(this) // a reply queued before speech failed to start
             onDone?.let { main.post(it) }
             return
         }
+        // So the wake word listener doesn't hear Ajax talking. Released when done; the limit covers
+        // a speech engine that never reports back.
+        MicGuard.hold(this, maxMs = 60_000)
         if (!ready) { pending = text to onDone; return }
         val id = "u${counter++}"
         onDone?.let { callbacks[id] = it }
@@ -51,7 +55,10 @@ class Speaker(ctx: Context) : TextToSpeech.OnInitListener {
     }
 
     private fun fire(id: String?) {
-        main.post { callbacks.remove(id)?.invoke() }
+        main.post {
+            if (id == "u${counter - 1}") MicGuard.release(this)
+            callbacks.remove(id)?.invoke()
+        }
     }
 
     /** Stops talking and drops pending callbacks (overlay closed mid-sentence). */
@@ -59,9 +66,11 @@ class Speaker(ctx: Context) : TextToSpeech.OnInitListener {
         pending = null
         callbacks.clear()
         if (ready) tts.stop()
+        MicGuard.release(this)
     }
 
     fun shutdown() {
+        MicGuard.release(this)
         tts.stop()
         tts.shutdown()
     }

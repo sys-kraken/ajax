@@ -2,8 +2,6 @@ package com.ajax.assistant
 
 import android.Manifest
 import android.app.AppOpsManager
-import android.app.usage.UsageEvents
-import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Handler
@@ -131,19 +129,8 @@ object Access {
     }
 
     /** The label of the protected app in front, if Ajax is allowed to know what is in front. */
-    private fun protectedInFront(ctx: Context): String? {
-        if (protectedApps.isEmpty() || !canSeeForeground(ctx)) return null
-        val stats = ctx.getSystemService(UsageStatsManager::class.java) ?: return null
-        val end = System.currentTimeMillis()
-        val events = stats.queryEvents(end - 3_600_000L, end)
-        val event = UsageEvents.Event()
-        var front: String? = null
-        while (events.hasNextEvent()) {
-            events.getNextEvent(event)
-            if (event.eventType == UsageEvents.Event.ACTIVITY_RESUMED) front = event.packageName
-        }
-        return protectedApps[front]
-    }
+    private fun protectedInFront(ctx: Context): String? =
+        if (protectedApps.isEmpty()) null else protectedApps[Foreground.app(ctx)]
 
     private const val SERVICE_PKG = "com.ajax.assistant"
     private const val SERVICE_CLASS = "com.ajax.assistant.AjaxAccessibilityService"

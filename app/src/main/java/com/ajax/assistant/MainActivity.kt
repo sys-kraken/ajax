@@ -80,6 +80,10 @@ class MainActivity : Activity(), SpeechInput.Callback {
     private lateinit var stepRows: LinearLayout
     private lateinit var engine: Ui.Row
     private lateinit var accessMode: Ui.Row
+    private lateinit var wakeRow: Ui.Row
+    private lateinit var wakeSwitch: android.widget.Switch
+    private lateinit var heardRow: Ui.Row
+    private lateinit var batteryRow: Ui.Row
     private lateinit var hint: TextView
     private lateinit var grant: Ui.Row
     private lateinit var talk: Button
@@ -164,6 +168,22 @@ class MainActivity : Activity(), SpeechInput.Callback {
         }, Ui.below(this, 12))
 
         root.addView(Ui.group(this).apply {
+            wakeSwitch = Ui.switch(this@MainActivity).apply {
+                isChecked = WakeService.enabled(this@MainActivity)
+                setOnCheckedChangeListener { _, on -> setWake(on) }
+            }
+            wakeRow = Ui.row(this@MainActivity, "Listen for “Ajax”", end = wakeSwitch).also {
+                it.onClick { wakeSwitch.toggle() }
+                Ui.addRow(this, it.view)
+            }
+            heardRow = Ui.row(this@MainActivity, "Last heard", "Say “Ajax” or “lumos” to test").also { Ui.addRow(this, it.view) }
+            batteryRow = Ui.row(this@MainActivity, "Run in the background").also {
+                it.onClick { allowBackground() }
+                Ui.addRow(this, it.view)
+            }
+        }, Ui.below(this, 12))
+
+        root.addView(Ui.group(this).apply {
             fun option(label: String, sub: String, key: String, default: Boolean) {
                 val toggle = Ui.switch(this@MainActivity).apply {
                     isChecked = prefs.getBoolean(key, default)
@@ -219,6 +239,10 @@ class MainActivity : Activity(), SpeechInput.Callback {
     override fun onResume() {
         super.onResume()
         Access.settle(this)
+        WakeModel.listener = { showWake() }
+        WakeService.onHeard = { heardRow.sub("“$it”") }
+        if (WakeService.enabled(this) && !WakeService.running) WakeService.start(this)
+        main.postDelayed({ showWake() }, 300)
         ModelManager.listener = ::showModel
         showModel(ModelManager.state(this))
         refreshSteps()
@@ -265,6 +289,8 @@ class MainActivity : Activity(), SpeechInput.Callback {
 
     override fun onPause() {
         ModelManager.listener = null
+        WakeModel.listener = null
+        WakeService.onHeard = null
         // Leaving the screen (e.g. a command opened Settings) must not turn into an error.
         speech.cancel()
         super.onPause()
@@ -274,6 +300,60 @@ class MainActivity : Activity(), SpeechInput.Callback {
         speech.destroy()
         speaker.shutdown()
         super.onDestroy()
+    }
+
+    private fun setWake(on: Boolean) {
+        getSharedPreferences(Prefs.NAME, MODE_PRIVATE).edit().putBoolean(Prefs.WAKE, on).apply()
+        if (!on) {
+            WakeService.stop(this)
+            main.postDelayed({ showWake() }, 300)
+            return
+        }
+        val missing = listOfNotNull(
+            Manifest.permission.RECORD_AUDIO.takeIf { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED },
+            Manifest.permission.POST_NOTIFICATIONS.takeIf {
+                Build.VERSION.SDK_INT >= 33 && checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
+            },
+        )
+        if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), 2)
+        WakeModel.download(this) { ok ->
+            if (ok && WakeService.enabled(this)) WakeService.start(this)
+            main.postDelayed({ showWake() }, 500)
+        }
+        showWake()
+    }
+
+    private fun showWake() {
+        if (isFinishing || isDestroyed) return
+        val on = WakeService.enabled(this)
+        if (wakeSwitch.isChecked != on) wakeSwitch.isChecked = on
+        val mb = { b: Long -> b / 1_000_000 }
+        val s = WakeModel.state(this)
+        wakeRow.sub(
+            when {
+                s is ModelManager.State.Downloading -> "Downloading the speech model… ${mb(s.done)} of ${mb(s.total)} MB"
+                s is ModelManager.State.Failed -> s.message
+                !on -> "Off. Turning it on downloads a ${mb(WakeModel.SIZE_BYTES)} MB speech model once."
+                WakeService.running -> "On, even with the screen off. The green dot stays on. Alerts you when another app uses the microphone."
+                else -> "Starting…"
+            },
+        )
+        heardRow.view.visibility = if (on && WakeService.running) View.VISIBLE else View.GONE
+        val pm = getSystemService(android.os.PowerManager::class.java)
+        val free = pm?.isIgnoringBatteryOptimizations(packageName) == true
+        batteryRow.view.visibility = if (on) View.VISIBLE else View.GONE
+        batteryRow.sub(if (free) "Allowed" else "Tap so the phone doesn't stop Ajax listening", if (free) Ui.MUTED else Ui.ACCENT)
+    }
+
+    @android.annotation.SuppressLint("BatteryLife")
+    private fun allowBackground() {
+        val pm = getSystemService(android.os.PowerManager::class.java)
+        if (pm?.isIgnoringBatteryOptimizations(packageName) == true) return
+        try {
+            startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+        } catch (e: ActivityNotFoundException) {
+            show(Result(false, "Set Ajax to Unrestricted in Settings > Apps > Ajax > Battery."))
+        }
     }
 
     private fun isDefaultAssistant(): Boolean {

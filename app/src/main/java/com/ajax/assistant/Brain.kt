@@ -19,6 +19,9 @@ class Brain(private val ctx: Context) {
 
     private var pending: Outcome.Ask? = null
 
+    /** Refuses some commands before they run (hands-free with the phone locked). */
+    var gate: ((CommandRouter.Match) -> Result?)? = null
+
     /** Bumped on reset, so a slow model answer from an old conversation is dropped. */
     private var generation = 0
 
@@ -96,6 +99,7 @@ class Brain(private val ctx: Context) {
     }
 
     private fun run(m: CommandRouter.Match, fromModel: Boolean, phrase: String = ""): Reply {
+        gate?.invoke(m)?.let { return Reply(it, ends = true) }
         // A guessed phone call is too costly to get wrong: confirm it first.
         if (fromModel && m.id == "call") {
             val ask = Outcome.Ask("${phrase.replaceFirstChar { it.uppercase() }}?", endsConversation = true) { c ->

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Single-colour version for themed icons. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#FFFFFFFF" android:pathData="M29.50,26.00h3.55v3.55h-3.55zM75.00,26.00h3.55v3.55h-3.55zM33.00,29.50h3.55v3.55h-3.55zM71.50,29.50h3.55v3.55h-3.55zM36.50,33.00h3.55v3.55h-3.55zM47.00,33.00h14.05v3.55h-14.05zM68.00,33.00h3.55v3.55h-3.55zM40.00,36.50h28.05v3.55h-28.05zM36.50,40.00h35.05v3.55h-35.05zM33.00,43.50h10.55v3.55h-10.55zM47.00,43.50h14.05v3.55h-14.05zM64.50,43.50h10.55v3.55h-10.55zM33.00,47.00h42.05v3.55h-42.05zM29.50,50.50h49.05v3.55h-49.05zM29.50,57.50h49.05v3.55h-49.05zM29.50,61.00h49.05v3.55h-49.05zM29.50,64.50h10.55v3.55h-10.55zM68.00,64.50h10.55v3.55h-10.55z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M40.00,68.00h7.05v3.55h-7.05zM50.50,68.00h7.05v3.55h-7.05zM61.00,68.00h7.05v3.55h-7.05zM36.50,71.50h3.55v3.55h-3.55zM68.00,71.50h3.55v3.55h-3.55z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M40.00,71.50h7.05v3.55h-7.05zM50.50,71.50h7.05v3.55h-7.05zM61.00,71.50h7.05v3.55h-7.05zM36.50,75.00h35.05v3.55h-35.05zM40.00,78.50h28.05v3.55h-28.05z" />
+</vector>

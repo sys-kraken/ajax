@@ -26,8 +26,12 @@ class SpeechInput(private val ctx: Context, private val cb: Callback) {
     private var retriedOnline = false
     private var retriedDisconnect = false
 
-    /** True only between startListening and its result/error. */
+    /** True only between startListening and its result/error. Ajax's wake word listener steps aside meanwhile. */
     private var listening = false
+        set(v) {
+            field = v
+            if (v) MicGuard.hold(this, maxMs = 60_000) else MicGuard.release(this)
+        }
 
     /** Off by default: audio stays on the phone. When on, the system recogniser may use the network. */
     private val allowOnline: Boolean
