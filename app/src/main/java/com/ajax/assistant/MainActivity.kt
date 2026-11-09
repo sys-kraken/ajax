@@ -86,6 +86,8 @@ class MainActivity : Activity(), SpeechInput.Callback {
     private lateinit var batteryRow: Ui.Row
     private lateinit var callsRow: Ui.Row
     private lateinit var teachRow: Ui.Row
+    private lateinit var lockRow: Ui.Row
+    private lateinit var lockSwitch: android.widget.Switch
     private lateinit var callsSwitch: android.widget.Switch
     private lateinit var hint: TextView
     private lateinit var grant: Ui.Row
@@ -192,6 +194,14 @@ class MainActivity : Activity(), SpeechInput.Callback {
                 it.onClick { teachVoice() }
                 Ui.addRow(this, it.view)
             }
+            lockSwitch = Ui.switch(this@MainActivity).apply {
+                isChecked = prefs.getBoolean(Prefs.VOICE_LOCK, false)
+                setOnCheckedChangeListener { _, on -> setVoiceLock(on) }
+            }
+            lockRow = Ui.row(this@MainActivity, "Voice lock", end = lockSwitch).also {
+                it.onClick { lockSwitch.toggle() }
+                Ui.addRow(this, it.view)
+            }
             batteryRow = Ui.row(this@MainActivity, "Run in the background").also {
                 it.onClick { allowBackground() }
                 Ui.addRow(this, it.view)
@@ -255,6 +265,7 @@ class MainActivity : Activity(), SpeechInput.Callback {
         super.onResume()
         Access.settle(this)
         WakeModel.listener = { showWake() }
+        VoiceModel.listener = { showWake() }
         WakeService.onHeard = { heardRow.sub("“$it”") }
         if (WakeService.enabled(this) && !WakeService.running) WakeService.start(this)
         main.postDelayed({ showWake() }, 300)
@@ -305,6 +316,7 @@ class MainActivity : Activity(), SpeechInput.Callback {
     override fun onPause() {
         ModelManager.listener = null
         WakeModel.listener = null
+        VoiceModel.listener = null
         WakeService.onHeard = null
         // Leaving the screen (e.g. a command opened Settings) must not turn into an error.
         speech.cancel()
@@ -348,7 +360,7 @@ class MainActivity : Activity(), SpeechInput.Callback {
             when {
                 s is ModelManager.State.Downloading -> "Downloading the speech model… ${mb(s.done)} of ${mb(s.total)} MB"
                 s is ModelManager.State.Failed -> s.message
-                !on -> "Off. Turning it on downloads a ${mb(WakeModel.SIZE_BYTES)} MB speech model once."
+                !on -> "Off. Turning it on downloads a ${mb(WakeModel.sizeBytes)} MB speech model once."
                 WakeService.running -> "On, even with the screen off. The green dot stays on. Alerts you when another app uses the microphone."
                 else -> "Starting…"
             },
@@ -356,6 +368,19 @@ class MainActivity : Activity(), SpeechInput.Callback {
         heardRow.view.visibility = if (on && WakeService.running) View.VISIBLE else View.GONE
         callsRow.view.visibility = if (on) View.VISIBLE else View.GONE
         teachRow.view.visibility = if (on) View.VISIBLE else View.GONE
+        lockRow.view.visibility = if (on) View.VISIBLE else View.GONE
+        val vm = VoiceModel.state(this)
+        lockRow.sub(
+            when {
+                !lockSwitch.isChecked -> "Off. When on, only your voice can say Ajax, lumos, nox or flashlight."
+                vm is ModelManager.State.Downloading -> "Downloading the voice model… ${mb(vm.done)} of ${mb(vm.total)} MB"
+                vm is ModelManager.State.Failed -> vm.message
+                VoiceSamples.count(this) == 0 -> "Record your voice first: tap Teach Ajax your voice."
+                VoiceLock.needsPrint(this) -> "Learning your voice from your recordings…"
+                else -> "On. Videos, music and other people can't wake Ajax. Learned from ${VoiceLock.printedFrom(this)} recordings."
+            },
+            if (lockSwitch.isChecked && VoiceSamples.count(this) == 0) Ui.ACCENT else Ui.MUTED,
+        )
         if (!teaching) {
             val n = VoiceSamples.count(this)
             teachRow.sub(if (n == 0) "Say \u201cAjax\u201d ${VoiceSamples.TAKES} times so it learns your voice." else "$n recordings saved. Tap to record more.")
@@ -383,6 +408,18 @@ class MainActivity : Activity(), SpeechInput.Callback {
             teaching = false
             showWake()
         }
+    }
+
+    private fun setVoiceLock(on: Boolean) {
+        getSharedPreferences(Prefs.NAME, MODE_PRIVATE).edit().putBoolean(Prefs.VOICE_LOCK, on).apply()
+        if (on && !VoiceModel.isReady(this)) {
+            VoiceModel.download(this) { ok ->
+                // The listener loads the voice model when it starts: restart it to pick it up.
+                if (ok && WakeService.running) { WakeService.stop(this); main.postDelayed({ WakeService.start(this) }, 600) }
+                main.postDelayed({ showWake() }, 800)
+            }
+        }
+        showWake()
     }
 
     private fun setCalls(on: Boolean) {

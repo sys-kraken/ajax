@@ -10,13 +10,33 @@ import java.net.URL
 import java.security.MessageDigest
 import java.util.zip.ZipInputStream
 
-/** The offline speech model behind the wake word: downloaded once, checked, unpacked into app storage. */
-object WakeModel {
-    private const val NAME = "vosk-model-small-en-us-0.15"
-    private const val URL_STRING = "https://alphacephei.com/vosk/models/$NAME.zip"
-    const val SIZE_BYTES = 41_205_931L
-    private const val SHA256 = "30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498"
+/** The offline speech model behind the wake word. */
+val WakeModel = ZipModel(
+    dirName = "wake",
+    name = "vosk-model-small-en-us-0.15",
+    what = "Wake word",
+    sizeBytes = 41_205_931L,
+    sha256 = "30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498",
+)
 
+/** The offline model that tells voices apart, for the voice lock. */
+val VoiceModel = ZipModel(
+    dirName = "voiceprint",
+    name = "vosk-model-spk-0.4",
+    what = "Voice lock",
+    sizeBytes = 13_869_103L,
+    sha256 = "a74d8f51144484813e16af689bb0f916b7a111e2347f467c4933c1166097b5a7",
+)
+
+/** A Vosk model zip: downloaded once from alphacephei.com, checked against its SHA-256, unpacked into app storage. */
+class ZipModel(
+    private val dirName: String,
+    private val name: String,
+    private val what: String,
+    val sizeBytes: Long,
+    private val sha256: String,
+) {
+    private val url = "https://alphacephei.com/vosk/models/$name.zip"
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var downloading: ModelManager.State.Downloading? = null
     @Volatile private var lastError: String? = null
@@ -24,8 +44,8 @@ object WakeModel {
     /** Called on the main thread when the download moves on. One listener (the settings screen). */
     var listener: ((ModelManager.State) -> Unit)? = null
 
-    private fun root(ctx: Context) = File(ctx.filesDir, "wake")
-    fun path(ctx: Context) = File(root(ctx), NAME)
+    private fun root(ctx: Context) = File(ctx.filesDir, dirName)
+    fun path(ctx: Context) = File(root(ctx), name)
     private fun readyMark(ctx: Context) = File(path(ctx), ".ready")
 
     fun isReady(ctx: Context) = readyMark(ctx).exists()
@@ -33,7 +53,7 @@ object WakeModel {
     /** The files are there but won't load: delete them so they are downloaded again. */
     fun discard(ctx: Context) {
         root(ctx).deleteRecursively()
-        lastError = "The speech model was damaged and has been removed. Turn listening on again to download it."
+        lastError = "The $what model was damaged and has been removed. Turn it on again to download it."
     }
 
     fun state(ctx: Context): ModelManager.State = when {
@@ -49,13 +69,13 @@ object WakeModel {
         if (isReady(app)) { done(true); return }
         if (downloading != null) return
         lastError = null
-        publish(ModelManager.State.Downloading(0, SIZE_BYTES))
+        publish(ModelManager.State.Downloading(0, sizeBytes))
         Thread {
             val ok = try {
                 fetchAndUnpack(app)
                 true
             } catch (e: Exception) {
-                lastError = "Wake word download failed: ${e.message ?: e.javaClass.simpleName}. Try again on Wi-Fi."
+                lastError = "$what download failed: ${e.message ?: e.javaClass.simpleName}. Try again on Wi-Fi."
                 false
             }
             downloading = null
@@ -73,9 +93,9 @@ object WakeModel {
 
     private fun fetchAndUnpack(ctx: Context) {
         val dir = root(ctx).apply { deleteRecursively(); mkdirs() }
-        val zip = File(dir, "$NAME.zip")
+        val zip = File(dir, "$name.zip")
         val digest = MessageDigest.getInstance("SHA-256")
-        val conn = URL(URL_STRING).openConnection() as HttpURLConnection
+        val conn = URL(url).openConnection() as HttpURLConnection
         conn.connectTimeout = 15_000
         conn.readTimeout = 30_000
         try {
@@ -93,7 +113,7 @@ object WakeModel {
                         total += n
                         if (total - lastShown > 1_000_000) {
                             lastShown = total
-                            publish(ModelManager.State.Downloading(total, SIZE_BYTES))
+                            publish(ModelManager.State.Downloading(total, sizeBytes))
                         }
                     }
                 }
@@ -102,7 +122,7 @@ object WakeModel {
             conn.disconnect()
         }
         val hex = digest.digest().joinToString("") { "%02x".format(it) }
-        if (hex != SHA256) { zip.delete(); throw IllegalStateException("the file didn't match its checksum") }
+        if (hex != sha256) { zip.delete(); throw IllegalStateException("the file didn't match its checksum") }
         val base = dir.canonicalPath + File.separator
         ZipInputStream(zip.inputStream().buffered()).use { z ->
             while (true) {

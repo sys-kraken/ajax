@@ -4,6 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.vosk.Model
 import org.vosk.Recognizer
+import org.vosk.SpeakerModel
 import kotlin.math.sqrt
 
 /**
@@ -13,7 +14,7 @@ import kotlin.math.sqrt
  * recogniser's own pause detection. The recogniser only knows the keywords, so it is fast and turns
  * other speech into "[unk]". Audio thread only.
  */
-class Spotter(model: Model, phrases: Collection<String>) : AutoCloseable {
+class Spotter(model: Model, phrases: Collection<String>, speakers: SpeakerModel? = null) : AutoCloseable {
     companion object {
         const val RATE = 16_000
         /** 50 ms of 16-bit mono audio. */
@@ -43,10 +44,24 @@ class Spotter(model: Model, phrases: Collection<String>) : AutoCloseable {
     }
 
     /** One utterance: the words, and how sure the recogniser was of its least certain word (0 to 1). */
-    class Heard(val text: String, val confidence: Double, val chunks: Int, var wakeScore: Float = 0f)
+    /**
+     * One utterance: the words, how sure the recogniser was of its least certain word (0 to 1), its
+     * length in chunks, and, with a voice model, the voice's fingerprint and how much speech it used.
+     */
+    class Heard(
+        val text: String,
+        val confidence: Double,
+        val chunks: Int,
+        var wakeScore: Float = 0f,
+        val voice: FloatArray? = null,
+        val voiceFrames: Int = 0,
+    )
 
     private val rec = Recognizer(model, RATE.toFloat(), JSONArray(phrases.toList() + "[unk]").toString())
-        .apply { setWords(true) }
+        .apply {
+            setWords(true)
+            if (speakers != null) setSpeakerModel(speakers)
+        }
     private val before = ArrayDeque<ByteArray>()
     private var noise = 30.0
     private var speaking = false
@@ -112,7 +127,9 @@ class Spotter(model: Model, phrases: Collection<String>) : AutoCloseable {
             val words = json.optJSONArray("result")
             var conf = if (words == null || words.length() == 0) 0.0 else 1.0
             if (words != null) for (i in 0 until words.length()) conf = minOf(conf, words.getJSONObject(i).optDouble("conf", 0.0))
-            return Heard(text, conf, length)
+            val spk = json.optJSONArray("spk")
+            val voice = spk?.let { a -> FloatArray(a.length()) { a.getDouble(it).toFloat() } }
+            return Heard(text, conf, length, voice = voice, voiceFrames = json.optInt("spk_frames", 0))
         }
         return null
     }

@@ -238,7 +238,11 @@ class WakeService : Service() {
             main.post { stopSelf() }
             return
         }
-        val spotter = Spotter(model, WakeWords.phrases)
+        // The voice model, for the voice lock; without it phrases carry no voice fingerprint.
+        speakers = if (VoiceModel.isReady(this)) {
+            try { org.vosk.SpeakerModel(VoiceModel.path(this).absolutePath) } catch (e: Exception) { VoiceModel.discard(this); null }
+        } else null
+        val spotter = Spotter(model, WakeWords.phrases, speakers)
         // The detector trained on "Ajax"; without it, "Ajax" falls back to the keyword recogniser.
         val detector = AjaxDetector.open(this)
         val recent = ArrayDeque<Float>()          // detector scores during the current phrase
@@ -250,12 +254,26 @@ class WakeService : Service() {
         val buf = ByteArray(Spotter.CHUNK_BYTES)
         var mic: AudioRecord? = null
         var nextTestCheck = 0L
+        var nextMediaCheck = 0L
+        var mediaPlaying = false
         try {
             while (alive) {
                 val now = android.os.SystemClock.uptimeMillis()
                 if (now >= nextTestCheck) {
                     nextTestCheck = now + 3_000
-                    runRecordedTests(model)
+                    // Your recordings changed (or the voice model just arrived): make the voice print.
+                    try {
+                        speakers?.let { sp -> if (VoiceLock.needsPrint(this)) VoiceLock.makePrint(this, model, sp) }
+                    } catch (e: Exception) {
+                        android.util.Log.w("AjaxWake", "voice print failed", e)
+                    }
+                    // The development checks must never take listening down with them.
+                    try {
+                        runRecordedTests(model)
+                    } catch (e: Exception) {
+                        android.util.Log.w("AjaxWake", "recorded test failed", e)
+                        java.io.File(filesDir, "wake-test").deleteRecursively()
+                    }
                 }
                 if (paused) {
                     if (mic != null) {
@@ -284,7 +302,13 @@ class WakeService : Service() {
                 val result = active.feed(buf, n)
                 // The detector costs real CPU, so it runs only while someone talks: when talking
                 // starts it first catches up on the last 2 s, then follows the phrase to its end.
-                if (detector != null && !forCall) {
+                // While only watching, the detector sits out audio playing on the phone: the constant
+                // sound would keep it running for nothing.
+                if (now >= nextMediaCheck) {
+                    nextMediaCheck = now + 1_000
+                    mediaPlaying = getSystemService(android.media.AudioManager::class.java)?.isMusicActive == true
+                }
+                if (detector != null && !forCall && !(DETECTOR_WATCH_ONLY && mediaPlaying)) {
                     if (active.isSpeaking || result != null) {
                         if (!detecting) {
                             detecting = true
@@ -315,6 +339,8 @@ class WakeService : Service() {
             spotter.close()
             callSpotter.close()
             detector?.close()
+            speakers?.close()
+            speakers = null
             model.close()
         }
     }
@@ -364,7 +390,7 @@ class WakeService : Service() {
         val wavs = dir.listFiles { f -> f.name.endsWith(".wav") }?.sortedBy { it.name } ?: return
         if (wavs.isEmpty()) return
         val out = StringBuilder()
-        Spotter(model, WakeWords.phrases).use { s ->
+        Spotter(model, WakeWords.phrases, speakers).use { s ->
             for (f in wavs) {
                 val audio = f.readBytes().let { it.copyOfRange(minOf(44, it.size), it.size) }
                 val heard = mutableListOf<String>()
@@ -382,15 +408,19 @@ class WakeService : Service() {
                 var i = 0
                 while (i < audio.size) {
                     val n = minOf(Spotter.CHUNK_BYTES, audio.size - i)
-                    s.feed(audio.copyOfRange(i, i + n), n)?.let { heard += describe(it) }
+                    val t0 = System.nanoTime()
+                    s.feed(audio.copyOfRange(i, i + n), n)?.let { heard += describe(it) + " in " + (System.nanoTime() - t0) / 1_000_000 + " ms" }
                     i += n
                 }
                 val silence = ByteArray(Spotter.CHUNK_BYTES)
-                repeat(20) { s.feed(silence, silence.size)?.let { heard += describe(it) } }
+                repeat(20) {
+                    val t0 = System.nanoTime()
+                    s.feed(silence, silence.size)?.let { heard += describe(it) + " in " + (System.nanoTime() - t0) / 1_000_000 + " ms" }
+                }
                 out.append(f.name).append(" = ").append(heard.joinToString(" | "))
                     .append(" -> ").append(heard.filterNot { it.startsWith("detector") }.map { t ->
                         val kind = WakeWords.match(t.substringBefore(" ("))
-                        val conf = t.substringAfterLast("(").removeSuffix(")").toDouble()
+                        val conf = Regex("""\((\d+\.\d+)\)""").find(t)?.groupValues?.get(1)?.toDoubleOrNull() ?: 0.0
                         if (kind == null) "none" else if (conf >= WakeWords.minConfidence(kind, false)) kind.name else "$kind-rejected"
                     }).appendLine()
                 f.delete()
@@ -399,7 +429,11 @@ class WakeService : Service() {
         java.io.File(dir, "results.txt").writeText(out.toString())
     }
 
-    private fun describe(h: Spotter.Heard) = h.text + " (" + "%.2f".format(h.confidence) + ")"
+    private fun describe(h: Spotter.Heard): String {
+        val sim = VoiceLock.similarity(this, h.voice)
+        val voice = if (sim == null) "" else " voice " + "%.2f".format(sim) + "/" + h.voiceFrames
+        return h.text + " (" + "%.2f".format(h.confidence) + ")" + voice
+    }
 
     @Suppress("MissingPermission")
     private val effects = HashMap<Int, List<android.media.audiofx.AudioEffect>>()
@@ -438,11 +472,21 @@ class WakeService : Service() {
     /** True when the trained detector decides about "Ajax" (shown in settings). */
     private var usingDetector = false
 
+    /** Loaded on the audio thread when the voice model is downloaded. */
+    @Volatile private var speakers: org.vosk.SpeakerModel? = null
+
     private fun heard(h: Spotter.Heard, threshold: Float = 1f) {
-        onHeard?.invoke(if (usingDetector) "${h.text}  (Ajax score ${"%.2f".format(h.wakeScore)})" else h.text)
+        val sim = VoiceLock.similarity(this, h.voice)
+        val notes = listOfNotNull(
+            if (usingDetector) "Ajax score ${"%.2f".format(h.wakeScore)}" else null,
+            sim?.let { "your voice ${"%.2f".format(it)}" },
+        )
+        onHeard?.invoke(if (notes.isEmpty()) h.text else "${h.text}  (${notes.joinToString(", ")})")
         if (paused) return
         if (CallVoice.listening) { CallVoice.heard(this, h.text); return }
         logScore(h, threshold)
+        // Voice lock: keywords count only in your voice (a video or song saying them does nothing).
+        if (!VoiceLock.accepts(this, h)) return
         if (usingDetector && !DETECTOR_WATCH_ONLY) {
             // Said on its own (a short utterance) and the detector is sure: that's "Ajax".
             val playing = getSystemService(android.media.AudioManager::class.java)?.isMusicActive == true
@@ -475,7 +519,7 @@ class WakeService : Service() {
         try {
             val f = java.io.File(filesDir, "wake-scores.tsv")
             val time = java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())
-            f.appendText("$time\t${h.text}\t${"%.2f".format(h.confidence)}\t${"%.3f".format(h.wakeScore)}\t${h.chunks}\t$threshold\n")
+            f.appendText("$time\t${h.text}\t${"%.2f".format(h.confidence)}\t${"%.3f".format(h.wakeScore)}\t${h.chunks}\t$threshold\t${VoiceLock.similarity(this, h.voice)?.let { "%.2f".format(it) } ?: "-"}\t${h.voiceFrames}\n")
             if (f.length() > 200_000) f.writeText(f.readLines().takeLast(2_000).joinToString("\n", postfix = "\n"))
         } catch (e: java.io.IOException) {}
     }
