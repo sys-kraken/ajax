@@ -23,10 +23,15 @@ jobs:
           else
             echo "::warning::AJAX_KEYSTORE_B64 is not set: this APK has a throwaway key and won't install over other builds."
           fi
-      - run: ./gradlew --no-daemon testDebugUnitTest assembleDebug
+      - run: ./gradlew --no-daemon testDebugUnitTest assembleDebug assembleRelease
         env:
           AJAX_KEYSTORE_PASSWORD: ${{ secrets.AJAX_KEYSTORE_PASSWORD }}
       - uses: actions/upload-artifact@v4
         with:
           name: ajax-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+      # The build for everyday use (not debuggable), signed with the same key.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ajax-release-apk
+          path: app/build/outputs/apk/release/*.apk

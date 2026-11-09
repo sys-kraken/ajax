@@ -26,14 +26,34 @@ android {
 
     // Android only installs an update signed with the same key as the installed app, and a fresh CI
     // machine would make a new debug key every time. Same key = no uninstall, so the model is kept.
+    val keystore = System.getenv("AJAX_KEYSTORE")?.takeIf { it.isNotEmpty() }
     signingConfigs {
         getByName("debug") {
-            System.getenv("AJAX_KEYSTORE")?.takeIf { it.isNotEmpty() }?.let {
+            keystore?.let {
                 storeFile = file(it)
                 storePassword = System.getenv("AJAX_KEYSTORE_PASSWORD")
                 keyAlias = "ajax"
                 keyPassword = System.getenv("AJAX_KEYSTORE_PASSWORD")
             }
+        }
+        // The same key, so the release build installs over a debug build (and back) and keeps its data.
+        if (keystore != null) {
+            create("release") {
+                storeFile = file(keystore)
+                storePassword = System.getenv("AJAX_KEYSTORE_PASSWORD")
+                keyAlias = "ajax"
+                keyPassword = System.getenv("AJAX_KEYSTORE_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        // The build for everyday use: not debuggable, so nothing can read Ajax's private storage over
+        // a USB cable (voice recordings, voice print, settings). Code shrinking stays off: the speech
+        // libraries find their classes by name at run time.
+        getByName("release") {
+            isMinifyEnabled = false
+            if (keystore != null) signingConfig = signingConfigs.getByName("release")
         }
     }
 
