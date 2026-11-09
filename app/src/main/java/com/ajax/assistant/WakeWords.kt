@@ -56,7 +56,7 @@ object WakeWords {
     }
 
     /** Commands that are safe, and work, with the phone locked or the screen off. */
-    private val lockedPrefixes = listOf("torch-", "volume-", "media-", "ringer-", "dnd-", "rotate-")
+    private val lockedPrefixes = listOf("torch-", "volume-", "media-", "ringer-", "dnd-", "rotate-", "about-")
     private val lockedIds = setOf(
         "mute", "unmute", "brightness", "info-battery", "info-time", "info-date", "info-storage",
         "info-memory", "info-temperature", "info-uptime", "info-device", "call-answer", "call-end",

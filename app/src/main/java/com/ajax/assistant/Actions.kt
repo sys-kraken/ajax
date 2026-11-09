@@ -77,6 +77,21 @@ object Actions {
         return if (launch(ctx, intent)) Result(true, "Opening ${app.label}") else Result(false, "${app.label} can't be opened.")
     }
 
+    /** Came with the phone (and hasn't been replaced by an update): Android won't uninstall it. */
+    fun isBuiltIn(ctx: Context, pkg: String): Boolean = try {
+        val flags = ctx.packageManager.getApplicationInfo(pkg, 0).flags
+        flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM != 0 &&
+            flags and android.content.pm.ApplicationInfo.FLAG_UPDATED_SYSTEM_APP == 0
+    } catch (e: PackageManager.NameNotFoundException) {
+        false
+    }
+
+    fun isInstalled(ctx: Context, pkg: String): Boolean = try {
+        ctx.packageManager.getApplicationInfo(pkg, 0); true
+    } catch (e: PackageManager.NameNotFoundException) {
+        false
+    }
+
     fun appInfo(ctx: Context, name: String): Result {
         val app = findApp(ctx, name) ?: return Result(false, "I couldn't find an app called $name.")
         val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", app.pkg, null))

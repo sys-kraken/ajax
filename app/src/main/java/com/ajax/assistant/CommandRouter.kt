@@ -95,9 +95,34 @@ object CommandRouter {
     }
 
     private fun routeNormalized(raw: String, t: String): Match? {
-        return sms(raw) ?: draft(raw) ?: spell(t) ?: volume(t) ?: media(t) ?: ringer(t) ?: torch(t) ?: rotate(t) ?: toggle(t) ?: brightness(t) ?: dnd(t)
-            ?: nav(t) ?: stopApps(t) ?: screen(t) ?: info(t) ?: alarm(t) ?: timer(t) ?: camera(t) ?: search(t)
+        return sms(raw) ?: draft(raw) ?: about(t) ?: spell(t) ?: volume(t) ?: media(t) ?: ringer(t) ?: torch(t) ?: rotate(t) ?: toggle(t) ?: brightness(t) ?: dnd(t)
+            ?: nav(t) ?: uninstall(t) ?: stopApps(t) ?: screen(t) ?: info(t) ?: alarm(t) ?: timer(t) ?: camera(t) ?: search(t)
             ?: navigate(t) ?: appInfo(t) ?: settings(t) ?: phoneCall(t) ?: call(t) ?: openApp(t)
+    }
+
+    // ---- About Ajax itself -------------------------------------------------------------------
+
+    private fun say(id: String, text: String) = Match(id) { Outcome.Done(Result(true, text)) }
+
+    private fun about(t: String): Match? = when {
+        Regex("^(?:who|what) (?:are|r) (?:you|u)$|^whats your name$|^what is your name$|^your name$|" +
+            "^who am i (?:talking|speaking) (?:to|with)$|^introduce yourself$|^tell me about yourself$").matches(t) ->
+            say("about-name", "I'm Ajax, your personal assistant. I live on this phone and work offline.")
+        Regex("^what can you do$|^what (?:can|do) i (?:say|ask)(?: you)?$|^help(?: me)?$|^what are you able to do$|" +
+            "^what commands do you (?:know|have)$|^what do you do$").matches(t) ->
+            say("about-help", "I can switch things like the flashlight, Wi-Fi and Do Not Disturb, open and close apps, " +
+                "call and text your contacts, set alarms and timers, read your notifications, tell you about your phone " +
+                "and answer your calls. Try saying: flashlight on.")
+        Regex("^who (?:made|created|built|programmed|designed) (?:you|u)$|^who is your (?:creator|maker|owner|boss)$|" +
+            "^who do you (?:belong to|work for)$").matches(t) ->
+            say("about-maker", "Franklin built me, and I work for him.")
+        Regex("^how (?:are|r) (?:you|u)(?: doing| today)?$|^hows it going$|^how do you feel$|^are you (?:ok|okay|good)$").matches(t) ->
+            say("about-mood", "I'm good, and ready when you are.")
+        Regex("^(?:hi|hello|hey|hey there|hi there|yo|good (?:morning|afternoon|evening))$").matches(t) ->
+            say("about-hello", "Hi. What can I do for you?")
+        Regex("^(?:are you there|are you listening|can you hear me|hear me|you there)$").matches(t) ->
+            say("about-here", "I'm here.")
+        else -> null
     }
 
     /** Spells are other names for ordinary commands, including what speech recognition makes of them. */
@@ -400,6 +425,28 @@ object CommandRouter {
     // ---- Stopping apps (Accessibility presses Force stop in each app's info page) -----------------
 
     private const val STOP = "terminate|kill|force stop|force close|force quit|close|quit|end"
+
+    /** "Uninstall Clash of Clans": asks first, then presses OK in Android's own uninstall dialog. */
+    private fun uninstall(t: String): Match? {
+        val name = Regex("^(?:uninstall|delete|remove) (?:the )?(.+?)(?: app| application| game)?(?: from (?:my |the |this )?phone)?$")
+            .matchEntire(t)?.groupValues?.get(1)?.trim() ?: return null
+        if (name in setOf("it", "this", "that", "them", "everything", "all")) return null
+        return Match("uninstall-app", sure = { Actions.hasApp(it, name) }) { ctx ->
+            val pkg = Actions.findPackage(ctx, name) ?: return@Match Outcome.Done(Result(false, "I couldn't find an app called $name."))
+            val label = SystemDump.label(ctx, pkg)
+            when {
+                pkg == ctx.packageName -> Outcome.Done(Result(false, "I can't uninstall myself. Do it from Settings > Apps > Ajax."))
+                Actions.isBuiltIn(ctx, pkg) -> Outcome.Done(Result(false, "$label came with the phone, so Android won't let it be uninstalled."))
+                else -> {
+                    Access.refusal(ctx)?.let { return@Match Outcome.Done(it) }
+                    Memory.rememberApp(name)
+                    Outcome.Ask("Uninstall $label? Its data is deleted too.", endsConversation = true) {
+                        Outcome.AfterHide("Uninstalling $label") { AjaxAccessibilityService.instance?.uninstall(pkg, label) ?: serviceStopped }
+                    }
+                }
+            }
+        }
+    }
 
     private fun stopApps(t: String): Match? {
         // "terminate it" right after Ajax listed the background apps means those apps.

@@ -37,7 +37,10 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
     init { Actions.watchTorch(ctx) }
     private lateinit var chat: LinearLayout
     private lateinit var chatScroll: ScrollView
-    private lateinit var status: TextView
+    private lateinit var orb: OrbView
+    private lateinit var statusLabel: TextView
+    private lateinit var send: TextView
+    private lateinit var mic: android.widget.ImageView
     private lateinit var input: EditText
 
     /** The user's bubble for the current request, updated as speech comes in. */
@@ -57,16 +60,26 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
     private var typing = false
 
     override fun onCreateContentView(): View {
-        chat = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        chat = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Ui.SURFACE)
+        }
         val maxChat = ctx.dp(320)
         chatScroll = object : ScrollView(ctx) {
             override fun onMeasure(widthSpec: Int, heightSpec: Int) =
                 super.onMeasure(widthSpec, MeasureSpec.makeMeasureSpec(maxChat, MeasureSpec.AT_MOST))
         }.apply {
             isVerticalScrollBarEnabled = false
+            // The card's own colour: left alone, the dark theme paints scroll views a shade darker.
+            setBackgroundColor(Ui.SURFACE)
+            overScrollMode = View.OVER_SCROLL_NEVER
+            // Never draw Android's focus highlight (a dark film) over the conversation.
+            isFocusable = false
+            if (Build.VERSION.SDK_INT >= 26) defaultFocusHighlightEnabled = false
             addView(chat)
         }
-        status = Ui.text(ctx, 13f, Ui.MUTED).apply { setPadding(ctx.dp(2), ctx.dp(8), 0, ctx.dp(10)) }
+        orb = OrbView(ctx)
+        statusLabel = Ui.text(ctx, 13f, Ui.MUTED)
         input = EditText(ctx).apply {
             hint = "Type a command"
             textSize = 15f
@@ -83,17 +96,42 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
             setOnEditorActionListener { _, action, _ ->
                 if (action == EditorInfo.IME_ACTION_SEND) { sendTyped(); true } else false
             }
+            // Send while there is text; otherwise the mic, to talk again after typing.
+            addTextChangedListener(object : android.text.TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                override fun afterTextChanged(e: android.text.Editable?) = showSendOrMic()
+            })
         }
-        val send = Ui.text(ctx, 14f, bold = true).apply {
+        send = Ui.text(ctx, 15f, Ui.ACCENT, bold = true).apply {
             text = "Send"
-            setPadding(ctx.dp(12), ctx.dp(10), ctx.dp(14), ctx.dp(10))
+            setPadding(ctx.dp(12), ctx.dp(10), ctx.dp(16), ctx.dp(10))
             setOnClickListener { sendTyped() }
+        }
+        mic = android.widget.ImageView(ctx).apply {
+            setImageResource(R.drawable.ic_mic)
+            contentDescription = "Talk"
+            setPadding(ctx.dp(12), ctx.dp(10), ctx.dp(14), ctx.dp(10))
+            setOnClickListener { talkAgain() }
         }
         val box = LinearLayout(ctx).apply {
             gravity = Gravity.CENTER_VERTICAL
-            background = Ui.rounded(ctx, Ui.SURFACE_RAISED, 22)
+            background = Ui.rounded(ctx, Ui.SURFACE_RAISED, 24)
+            minimumHeight = ctx.dp(48)
             addView(input, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             addView(send)
+            addView(mic)
+        }
+        // Header: the orb, then Ajax's name and what it is doing.
+        val header = LinearLayout(ctx).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            addView(orb, LinearLayout.LayoutParams(ctx.dp(40), ctx.dp(40)))
+            addView(LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(ctx.dp(8), 0, 0, 0)
+                addView(Ui.text(ctx, 15f, bold = true).apply { text = "Ajax" })
+                addView(statusLabel)
+            })
         }
         val card = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
@@ -101,12 +139,17 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
             // Keeps the text box from taking focus (and the keyboard) until it is touched.
             isFocusableInTouchMode = true
             descendantFocusability = android.view.ViewGroup.FOCUS_BEFORE_DESCENDANTS
-            setPadding(ctx.dp(14), ctx.dp(14), ctx.dp(14), ctx.dp(14))
-            background = Ui.rounded(ctx, Ui.SURFACE, 26)
+            setPadding(ctx.dp(14), ctx.dp(12), ctx.dp(14), ctx.dp(14))
+            background = Ui.rounded(ctx, Ui.SURFACE, 28, stroke = Ui.HAIRLINE)
             elevation = ctx.dp(12).toFloat()
+            // The header (orb, name, status), then the conversation, then the text box.
+            addView(header, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = ctx.dp(10)
+            })
             addView(chatScroll)
-            addView(status)
-            addView(box)
+            addView(box, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = ctx.dp(8)
+            })
         }
         val pad = ctx.dp(12)
         return LinearLayout(ctx).apply {
@@ -146,13 +189,14 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
             finishWith(Result(false, "Open Ajax and allow the microphone first."))
             return
         }
-        status.text = "Listening…"
+        mode(OrbView.State.LISTENING)
         speech.start()
         IntentModel.warm(ctx)
     }
 
     override fun onHide() {
         active = false
+        mode(OrbView.State.HIDDEN) // stops its animation
         MicGuard.release(this)
         MicGuard.quietMedia(ctx, false)
         main.removeCallbacksAndMessages(null)
@@ -174,15 +218,23 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
 
     /** One message in the chat: the user's on the right, Ajax's on the left. */
     private fun bubble(text: String, mine: Boolean): TextView {
-        val view = Ui.text(ctx, if (mine) 15f else 16f).apply {
+        val view = Ui.text(ctx, 15f).apply {
             this.text = text
-            background = Ui.rounded(ctx, if (mine) Ui.SURFACE_RAISED else Ui.BACKGROUND, 18)
-            setPadding(ctx.dp(12), ctx.dp(8), ctx.dp(12), ctx.dp(8))
+            setLineSpacing(0f, 1.15f)
+            // Rounded, with a tighter corner on the speaker's side: yours bottom right, Ajax's bottom left.
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(if (mine) MY_BUBBLE else Ui.SURFACE_RAISED)
+                val r = ctx.dp(18).toFloat()
+                val tight = ctx.dp(6).toFloat()
+                cornerRadii = if (mine) floatArrayOf(r, r, r, r, tight, tight, r, r)
+                else floatArrayOf(r, r, r, r, r, r, tight, tight)
+            }
+            setPadding(ctx.dp(14), ctx.dp(9), ctx.dp(14), ctx.dp(9))
         }
         chat.addView(view, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
             gravity = if (mine) Gravity.END else Gravity.START
-            bottomMargin = ctx.dp(6)
-            if (mine) marginStart = ctx.dp(40) else marginEnd = ctx.dp(40)
+            bottomMargin = ctx.dp(8)
+            if (mine) marginStart = ctx.dp(48) else marginEnd = ctx.dp(48)
         })
         toBottom()
         return view
@@ -202,13 +254,47 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
         }
     }
 
+    /** Shows what Ajax is doing: the orb and the line under its name. */
+    private fun mode(state: OrbView.State) {
+        orb.state = state
+        statusLabel.text = when (state) {
+            OrbView.State.LISTENING -> "Listening"
+            OrbView.State.THINKING -> "Thinking"
+            OrbView.State.SPEAKING -> "Speaking"
+            OrbView.State.IDLE -> "Type a command, or tap the mic"
+            OrbView.State.HIDDEN -> ""
+        }
+        showSendOrMic()
+    }
+
+    private fun showSendOrMic() {
+        val hasText = input.text.isNotBlank()
+        send.visibility = if (hasText) View.VISIBLE else View.GONE
+        // The mic shows when Ajax isn't already listening.
+        mic.visibility = if (!hasText && orb.state != OrbView.State.LISTENING) View.VISIBLE else View.GONE
+    }
+
+    /** The mic button: put the keyboard away and listen again. */
+    private fun talkAgain() {
+        if (!active) return
+        typing = false
+        input.clearFocus()
+        (ctx.getSystemService(Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
+            ?.hideSoftInputFromWindow(input.windowToken, 0)
+        speaker.stop()
+        liveBubble = null
+        followUpUntil = SystemClock.uptimeMillis() + FOLLOW_UP_MS
+        mode(OrbView.State.LISTENING)
+        speech.start()
+    }
+
     private fun startTyping() {
         typing = true
         main.removeCallbacksAndMessages(null)
         speech.cancel()
         speaker.stop()
         liveBubble = null
-        status.text = ""
+        mode(OrbView.State.IDLE) // stays while you type, just calmer
     }
 
     private fun sendTyped() {
@@ -220,7 +306,11 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
     }
 
     override fun onListening(mode: String) {
-        if (active) status.text = "Listening…"
+        if (active) mode(OrbView.State.LISTENING)
+    }
+
+    override fun onLevel(rmsdB: Float) {
+        if (active) orb.setLevel(rmsdB)
     }
 
     override fun onPartial(text: String) {
@@ -229,9 +319,9 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
 
     override fun onResults(candidates: List<String>) {
         if (!active) return
-        status.text = ""
+        mode(OrbView.State.THINKING)
         heard(candidates.first())
-        brain.handle(candidates, onThinking = { if (active) status.text = "Thinking…" }) { reply ->
+        brain.handle(candidates, onThinking = { if (active) mode(OrbView.State.THINKING) }) { reply ->
             if (active) act(reply)
         }
     }
@@ -239,7 +329,7 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
     private fun act(reply: Brain.Reply) {
         heard(brain.heard)
         liveBubble = null
-        status.text = ""
+        mode(if (reply.afterHide != null) OrbView.State.HIDDEN else OrbView.State.SPEAKING)
         val after = reply.afterHide
         when {
             after != null -> {
@@ -274,6 +364,8 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
             if (active && !typing) {
                 if (extend) followUpUntil = SystemClock.uptimeMillis() + FOLLOW_UP_MS
                 speech.start()
+            } else if (active) {
+                mode(OrbView.State.IDLE) // finished talking; you're typing, so no listening
             }
         }
     }
@@ -292,9 +384,14 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
     }
 
     private fun finishWith(r: Result) {
-        status.text = ""
+        mode(OrbView.State.SPEAKING)
         bubble(r.message, mine = false)
-        speaker.speak(r.message) { if (active) main.postDelayed({ close() }, 900) }
+        speaker.speak(r.message) {
+            if (active) {
+                mode(OrbView.State.IDLE)
+                main.postDelayed({ close() }, 900)
+            }
+        }
     }
 
     /** Tears the session down fully so the next side-key press starts clean. */
@@ -305,5 +402,7 @@ class AjaxSession(private val ctx: Context) : VoiceInteractionSession(ctx), Spee
 
     private companion object {
         const val FOLLOW_UP_MS = 12_000L
+        /** Your messages: a dark blue, so they stand apart from Ajax's grey. */
+        const val MY_BUBBLE = 0xFF1C3554.toInt()
     }
 }

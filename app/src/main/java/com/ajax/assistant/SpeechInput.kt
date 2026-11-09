@@ -17,6 +17,8 @@ class SpeechInput(private val ctx: Context, private val cb: Callback) {
         fun onResults(candidates: List<String>)
         fun onError(message: String)
         fun onNothingHeard() = onError("I didn't hear anything.")
+        /** How loud the voice is right now, for the orb (roughly -2 to 10 dB). */
+        fun onLevel(rmsdB: Float) {}
     }
 
     private var rec: SpeechRecognizer? = null
@@ -99,7 +101,7 @@ class SpeechInput(private val ctx: Context, private val cb: Callback) {
     private val listener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {}
         override fun onBeginningOfSpeech() {}
-        override fun onRmsChanged(rmsdB: Float) {}
+        override fun onRmsChanged(rmsdB: Float) = cb.onLevel(rmsdB)
         override fun onBufferReceived(buffer: ByteArray?) {}
         override fun onEndOfSpeech() {}
         override fun onEvent(eventType: Int, params: Bundle?) {}

@@ -159,6 +159,41 @@ class AjaxAccessibilityService : AccessibilityService() {
      * Force stops each app the way you would: opens its App info page, presses Force stop, then
      * confirms. Android has no other way for an ordinary app to do it. Reports the outcome itself.
      */
+    /**
+     * Uninstalls [pkg] after you said yes: opens Android's own uninstall dialog, presses its OK (or
+     * Uninstall) button, then checks the app is really gone. Reports the outcome itself.
+     */
+    fun uninstall(pkg: String, label: String): Result {
+        handler.removeCallbacksAndMessages(null)
+        try {
+            startActivity(
+                android.content.Intent(android.content.Intent.ACTION_DELETE, android.net.Uri.fromParts("package", pkg, null))
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        } catch (e: Exception) {
+            return Result(false, "Android wouldn't open the uninstall screen for $label.")
+        }
+        handler.postDelayed({ confirmUninstall(pkg, label, 0) }, 500)
+        return Result(true, "")
+    }
+
+    private fun confirmUninstall(pkg: String, label: String, tries: Int) {
+        val ok = findButton("OK", avoid = null) ?: findButton("Uninstall", avoid = null)
+        when {
+            ok != null && ok.performAction(AccessibilityNodeInfo.ACTION_CLICK) -> waitUntilGone(pkg, label, 0)
+            tries >= 20 -> say(Result(false, "I opened the uninstall screen but couldn't press OK. Tap it yourself."))
+            else -> handler.postDelayed({ confirmUninstall(pkg, label, tries + 1) }, 250)
+        }
+    }
+
+    private fun waitUntilGone(pkg: String, label: String, tries: Int) {
+        when {
+            !Actions.isInstalled(this, pkg) -> say(Result(true, "Uninstalled $label."))
+            tries >= 30 -> say(Result(false, "$label is still installed. Android may have asked something I couldn't answer."))
+            else -> handler.postDelayed({ waitUntilGone(pkg, label, tries + 1) }, 300)
+        }
+    }
+
     fun forceStop(pkgs: List<String>): Result {
         handler.removeCallbacksAndMessages(null)
         stopNext(pkgs.take(MAX_FORCE_STOP), 0, ArrayList(), ArrayList())
