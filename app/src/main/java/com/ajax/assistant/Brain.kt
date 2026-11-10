@@ -41,6 +41,21 @@ class Brain(private val ctx: Context) {
     }
 
     /**
+     * Not a command. With the answer model on the phone, Ajax answers it like a question put to a
+     * person; without it, a question becomes a web search and anything else gets [fallback].
+     */
+    private fun answerOr(said: String, hinted: Boolean, fallback: () -> Reply, onThinking: () -> Unit, done: (Reply) -> Unit) {
+        // A half-recognised command ("flashlight?") is still a command, not a question for the model.
+        if (hinted || !Answers.available(ctx)) { done(questionOr(said, fallback)); return }
+        onThinking()
+        val gen = generation
+        Answers.ask(ctx, said) { answer ->
+            if (gen != generation) return@ask
+            done(if (answer == null) questionOr(said, fallback) else Reply(Result(true, answer)))
+        }
+    }
+
+    /**
      * Handles what was heard. [done] runs once, on the main thread: immediately for known phrasing,
      * after the on-device model for anything else. [onThinking] fires only when the model is used.
      */
@@ -75,14 +90,16 @@ class Brain(private val ctx: Context) {
             ?: { Reply(Result(false, "I don't know that command yet.")) }
 
         // 2. Loose phrasing: the on-device model picks one command from the same table.
-        if (!IntentModel.available(ctx)) { done(questionOr(heard, fallback)); return }
+        // 3. Still nothing: it is a question or small talk, for the answer model.
+        val hinted = hits.isNotEmpty()
+        if (!IntentModel.available(ctx)) { answerOr(heard, hinted, fallback, onThinking, done); return }
         onThinking()
         val gen = generation
         val said = heard
         IntentModel.interpret(ctx, said) { phrase ->
             if (gen != generation) return@interpret
             val m = phrase?.let { CommandRouter.route(it) }?.takeIf { it.sure(ctx) }
-            if (phrase == null || m == null) { done(questionOr(said, fallback)); return@interpret }
+            if (phrase == null || m == null) { answerOr(said, hinted, fallback, {}, done); return@interpret }
             heard = "$said (understood as: $phrase)"
             done(run(m, fromModel = true, phrase = phrase))
         }

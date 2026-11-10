@@ -468,7 +468,8 @@ class WakeService : Service() {
     private fun heard(h: Spotter.Heard, threshold: Float = 1f) {
         val sim = VoiceLock.similarity(this, h.voice)
         val notes = listOfNotNull(scoreText(h.scores), sim?.let { "your voice ${"%.2f".format(it)}" })
-        onHeard?.invoke(if (notes.isEmpty()) h.text else "${h.text}  (${notes.joinToString(", ")})")
+        val shown = WakeWords.shown(h.text)
+        onHeard?.invoke(if (notes.isEmpty()) shown else "$shown  (${notes.joinToString(", ")})")
         if (paused) return
         if (CallVoice.listening) { CallVoice.heard(this, h.text); return }
         val playing = getSystemService(android.media.AudioManager::class.java)?.isMusicActive == true

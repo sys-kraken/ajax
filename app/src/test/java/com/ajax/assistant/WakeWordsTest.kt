@@ -170,6 +170,14 @@ class WakeWordsTest {
         assertNull(WakeWords.decide("[unk] ajax", 0.9, true, scores(ajax = 0.6f), agree = relaxed))
     }
 
+    @Test fun lumosIsShownByName() {
+        assertTrue(WakeWords.shown("lou moss").startsWith("lumos"))
+        assertTrue(WakeWords.shown("loom us").startsWith("lumos"))
+        assertEquals("nox", WakeWords.shown("nox"))
+        assertEquals("ajax", WakeWords.shown("ajax"))
+        assertEquals("[unk] lou", WakeWords.shown("[unk] lou"))
+    }
+
     @Test fun wordsInsideASentenceDoNothing() {
         assertNull(WakeWords.match("i told ajax about it"))
         assertNull(WakeWords.match("where is the flashlight"))

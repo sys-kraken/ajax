@@ -88,6 +88,13 @@ object WakeWords {
         else -> null
     }
 
+    /**
+     * What to show for a phrase in settings. The recogniser has no word "lumos", so it writes the
+     * ordinary words that sound like it ("lou moss", "loom us"): those are shown as lumos.
+     */
+    fun shown(text: String): String =
+        if (word(text) == Word.LUMOS && normalize(text) != "lumos") "lumos (written “${normalize(text)}”)" else text
+
     /** The word whose trained detector has to agree with this phrase; none for switching the light off. */
     fun word(text: String): Word? = when (normalize(text)) {
         in wake -> Word.AJAX

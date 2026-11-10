@@ -1,19 +1,25 @@
 name: model-hash
-# Verifies the SHA-256 pinned in ModelManager.kt against the real model file.
+# Verifies the SHA-256 pinned for each downloadable model against the real model file.
 on:
   push:
     paths:
       - app/src/main/java/com/ajax/assistant/ModelManager.kt
+      - app/src/main/java/com/ajax/assistant/AnswerModel.kt
       - .github/workflows/model-hash.yml
   workflow_dispatch:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        source: [ModelManager.kt, AnswerModel.kt]
+    name: verify ${{ matrix.source }}
     steps:
       - uses: actions/checkout@v4
       - name: Download and compare
         run: |
-          f=app/src/main/java/com/ajax/assistant/ModelManager.kt
+          f=app/src/main/java/com/ajax/assistant/${{ matrix.source }}
           url=$(grep -A1 'const val URL_STRING' "$f" | grep -o 'https://[^"]*')
           want=$(grep -o 'const val SHA256 = "[^"]*"' "$f" | cut -d'"' -f2)
           size=$(grep -o 'const val SIZE_BYTES = [0-9_]*' "$f" | grep -o '[0-9_]*$' | tr -d _)

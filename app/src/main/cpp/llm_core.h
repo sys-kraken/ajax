@@ -22,8 +22,9 @@ Session *open(const char *path, int threads);
 void close(Session *s);
 
 /**
- * Greedy completion of [prefix]+[suffix], restricted to the GBNF [grammar] (root rule "root").
- * Returns false on failure. Output is ASCII only.
+ * Greedy completion of [prefix]+[suffix]. With a GBNF [grammar] (root rule "root") the output is
+ * restricted to it; with an empty one the model writes freely until it ends its turn or reaches
+ * [maxTokens]. Returns false on failure. Output is ASCII only.
  */
 bool complete(Session *s, const std::string &prefix, const std::string &suffix, const std::string &grammar,
               int maxTokens, std::string &out);

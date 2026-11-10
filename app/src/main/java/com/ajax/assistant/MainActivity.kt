@@ -102,6 +102,8 @@ class MainActivity : Activity() {
     private val wakeOnly = mutableListOf<View>()
     private lateinit var modelStatus: Ui.Row
     private lateinit var modelButton: Ui.Row
+    private lateinit var answerStatus: Ui.Row
+    private lateinit var answerButton: Ui.Row
     private val main = Handler(Looper.getMainLooper())
     private var openSettingsMode = false
     private var showDetails = false
@@ -136,7 +138,7 @@ class MainActivity : Activity() {
             text = LOGO
             contentDescription = "Ajax"
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-            textSize = 7f
+            textSize = 5.5f
             setTextColor(LOGO_GREEN)
             includeFontPadding = false
             setLineSpacing(0f, 0.95f)
@@ -249,6 +251,12 @@ class MainActivity : Activity() {
                 it.onClick { onModelClicked() }
                 Ui.addRow(this, it.view)
             }
+            answerStatus = Ui.row(this@MainActivity, "Offline answers").also { Ui.addRow(this, it.view) }
+            answerButton = Ui.row(this@MainActivity, "").also {
+                it.title.setTextColor(Ui.ACCENT)
+                it.onClick { onAnswerModelClicked() }
+                Ui.addRow(this, it.view)
+            }
         }
 
         section("System") {
@@ -324,6 +332,8 @@ class MainActivity : Activity() {
         main.postDelayed({ showWake() }, 300)
         ModelManager.listener = ::showModel
         showModel(ModelManager.state(this))
+        AnswerModel.listener = ::showAnswerModel
+        showAnswerModel(AnswerModel.state(this))
         refreshSteps()
     }
 
@@ -332,6 +342,49 @@ class MainActivity : Activity() {
             is ModelManager.State.Ready -> ModelManager.delete(this)
             is ModelManager.State.Downloading -> {}
             else -> ModelManager.download(this)
+        }
+    }
+
+    private fun onAnswerModelClicked() {
+        when (AnswerModel.state(this)) {
+            is ModelManager.State.Ready -> dialog().setTitle("Delete the answer model?")
+                .setMessage("Ajax goes back to a web search for questions. You can download it again later.")
+                .setPositiveButton("Delete") { _, _ -> AnswerModel.delete(this); Answers.forget() }
+                .setNegativeButton("Cancel", null)
+                .show()
+            is ModelManager.State.Downloading -> {}
+            else -> AnswerModel.download(this)
+        }
+    }
+
+    private fun showAnswerModel(s: ModelManager.State) {
+        val mb = { b: Long -> b / 1_000_000 }
+        if (!LlamaNative.available) {
+            answerStatus.sub("Not supported on this phone (needs a 64-bit ARM processor).")
+            answerButton.view.visibility = View.GONE
+            return
+        }
+        answerButton.view.isEnabled = s !is ModelManager.State.Downloading
+        when (s) {
+            is ModelManager.State.Ready -> {
+                answerStatus.sub("On. Ajax answers general questions itself, with no internet. It can be wrong, and it knows nothing recent.")
+                answerButton.title.text = "Delete model (free ${mb(AnswerModel.SIZE_BYTES)} MB)"
+            }
+            is ModelManager.State.Downloading -> {
+                answerStatus.sub("Downloading… ${mb(s.done)} of ${mb(s.total)} MB. You can leave this screen.")
+                answerButton.title.text = "Downloading…"
+            }
+            is ModelManager.State.Failed -> {
+                answerStatus.sub(s.message)
+                answerButton.title.text = "Retry download"
+            }
+            is ModelManager.State.Missing -> {
+                answerStatus.sub(
+                    "Off. Questions open a web search. Downloading a ${mb(AnswerModel.SIZE_BYTES)} MB model once (use Wi-Fi) " +
+                        "lets Ajax answer them itself, offline.",
+                )
+                answerButton.title.text = "Download model"
+            }
         }
     }
 
@@ -368,6 +421,7 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         ModelManager.listener = null
+        AnswerModel.listener = null
         WakeModel.listener = null
         VoiceModel.listener = null
         WakeService.onHeard = null

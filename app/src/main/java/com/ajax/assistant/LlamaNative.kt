@@ -1,6 +1,6 @@
 package com.ajax.assistant
 
-/** Thin JNI binding to llama.cpp (see src/main/cpp). Call only from ModelManager's thread. */
+/** Thin JNI binding to llama.cpp (see src/main/cpp). Call only from GgufModel's thread. */
 object LlamaNative {
     /** False on phones without the native library (e.g. 32-bit or x86 devices). */
     val available: Boolean = try {
@@ -18,8 +18,9 @@ object LlamaNative {
     external fun setCache(handle: Long, path: String)
 
     /**
-     * Greedy completion of [prefix]+[suffix] restricted to [grammar] (GBNF, root "root"). The prefix
-     * is cached between calls, so keep it identical. Null on failure.
+     * Greedy completion of [prefix]+[suffix], restricted to [grammar] (GBNF, root "root") unless it
+     * is empty, in which case the model writes freely. The prefix is cached between calls, so keep
+     * it identical. Null on failure.
      */
     external fun complete(handle: Long, prefix: String, suffix: String, grammar: String, maxTokens: Int): String?
 }

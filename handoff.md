@@ -78,13 +78,13 @@ export JAVA_TOOL_OPTIONS="-Djdk.net.unixdomain.tmpdir=C:/Users/sys-admin/ajax-an
 adb install -r "C:\\Franklin\\Projects\\ajax\\app\\build\\outputs\\apk\\debug\\app-debug.apk"
 ```
 
-The last local build used `GITHUB_RUN_NUMBER=77`. Check what is installed with `adb shell dumpsys package com.ajax.assistant | grep versionCode`.
+The last local build used `GITHUB_RUN_NUMBER=79`. Check what is installed with `adb shell dumpsys package com.ajax.assistant | grep versionCode`.
 
 ### CI (`.github/workflows`)
 
 - `build.yml`: unit tests, `assembleDebug` and `assembleRelease`; uploads `ajax-debug-apk` and `ajax-release-apk`.
 - `model-eval.yml`: scores the real routing pipeline (regex rules via `EvalExportTest`, then the on-device model on what rules leave) on a main and a holdout set; must reach 85%. Last measured 93.8% main / 96.7% holdout.
-- `model-hash.yml`: checks `ModelManager.SHA256` against the real download.
+- `model-hash.yml`: checks the pinned SHA-256 and size of both models (`ModelManager.kt`, `AnswerModel.kt`) against the real downloads.
 - To wait on CI after a push: `gh run watch <id> --exit-status` (run it in the background).
 
 ### Release vs debug
@@ -111,7 +111,8 @@ All source is in `app/src/main/java/com/ajax/assistant/`.
 2. `Brain` runs one conversation: yes/no confirmations (`Outcome.Ask`), goodbye words, then routing.
 3. `CommandRouter.route(raw)`: regex rules, instant. Before routing, `Memory.resolve` fills in "it/that/him/her/them" from the last app, switch or contact (10 minutes). Order matters; `about()` (who are you, help, hello) is near the front, `openApp` last.
 4. If no rule is sure, `IntentModel` asks the on-device LLM (Qwen2.5-0.5B-Instruct Q4_0 GGUF, 428 MB, downloaded once by `ModelManager`, SHA-256 checked). The model only picks one canonical command phrase from a catalog, constrained by a per-request GBNF grammar built from clue words, so it can never invent an action; the phrase then goes back through the router. The evaluated prompt prefix is saved to a file and reused across model loads, the model stays loaded 5 minutes after use, and it is warmed when the overlay opens. Result: about 0.5 s instead of 15 s.
-5. A `Match` returns an `Outcome`: `Done(Result)`, `Ask` (yes/no first), or `AfterHide` (needs the accessibility service and the overlay out of the way).
+5. If it is still not a command and the optional answer model is downloaded, `Answers` (in `AnswerModel.kt`) answers it offline: Qwen2.5-1.5B-Instruct Q4_K_M GGUF, 1,117 MB, SHA-256 checked, downloaded from Settings > Understanding > Offline answers. Free text (no grammar, a small repetition penalty), at most 140 tokens, cleaned for speech. The prompt tells it that it cannot act on the phone and has no internet; the date and the last two exchanges (3 minutes) go in the changing part of the prompt. Without the model, a question still becomes a web search. A half-matched command never goes to the answer model. Added 2026-11-10; built and unit-tested, never run on the phone.
+6. A `Match` returns an `Outcome`: `Done(Result)`, `Ask` (yes/no first), or `AfterHide` (needs the accessibility service and the overlay out of the way).
 
 ### Doing things
 
@@ -128,6 +129,7 @@ Header: an animated orb (Ajax green, teal and blue, drawn in software with addit
 
 ### Settings and storage
 
+- `GgufModel`: download, hash check, loading and idle unloading for one model file; `ModelManager` (command model) and `AnswerModel` (answer model) each hold one, sharing one model thread.
 - `Prefs`: shared preferences keys (speak replies, online speech, wake, calls, voice lock).
 - Private files: `models/` (LLM), `wake/` (Vosk keyword model), `voiceprint/` (Vosk speaker model), `voice/` (their 25 "Ajax" recordings), `voiceprint.json`, `wake-scores.tsv` (watch-only log), `cache/prompt-*.kv`.
 
@@ -218,7 +220,7 @@ Built and unit-tested, but not confirmed on the phone:
 
 ## 7. Testing
 
-- Unit tests: 94, all passing (`testDebugUnitTest`). Routing is tested heavily (`CommandRouterTest`, `DeviceInfoRoutingTest`, `AboutAjaxTest`, `CallVoiceTest`, `MemoryTest`, `WakeWordsTest`, `SystemDumpTest`, `ServiceListTest`, `IntentModelTest`, `RecognizersTest`, `EvalExportTest`).
+- Unit tests: 101, all passing (`testDebugUnitTest`). Routing is tested heavily (`CommandRouterTest`, `DeviceInfoRoutingTest`, `AboutAjaxTest`, `CallVoiceTest`, `MemoryTest`, `WakeWordsTest`, `SystemDumpTest`, `ServiceListTest`, `IntentModelTest`, `RecognizersTest`, `EvalExportTest`).
 - **Recorded-speech hook (debug builds only):** 16 kHz mono WAVs moved into the app's `files/wake-test/` are fed through the real Spotter, the detector and the voice lock on the phone; results go to `files/wake-test/results.txt` (text, confidence, voice similarity and frames, timing, detector score, decision). `phone_test.sh` stages them (copy, then move in one go) and waits for the results. Test checks are wrapped so they can never stop listening (a bad parse once crashed the listener). Each phrase is judged twice, as in a quiet room and as with audio playing (`quiet=` / `playing=`), and each file ends with the detectors' and the listener's CPU time.
 - **Echo probe:** `files/aec-probe` (+ optional `files/aec-play.wav`) records 3 s through each microphone setting and writes levels to `files/aec-result.txt`.
 - **Driving the overlay:** `adb shell am start -n com.ajax.assistant/.ListenActivity`, find the EditText bounds with `uiautomator dump`, tap it, `input text "battery%spercent"`, `input keyevent KEYCODE_ENTER`, read Ajax's text nodes from another dump. Commands typed this way really run (a dimming test once set their brightness to 0).

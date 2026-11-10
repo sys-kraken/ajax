@@ -92,9 +92,14 @@ bool complete(Session *s, const std::string &prefix, const std::string &suffix, 
     }
 
     llama_sampler *smpl = llama_sampler_chain_init(llama_sampler_chain_default_params());
-    llama_sampler *g = llama_sampler_init_grammar(vocab, grammar.c_str(), "root");
-    if (!g) { llama_sampler_free(smpl); return false; }
-    llama_sampler_chain_add(smpl, g);                           // only grammar-legal tokens survive
+    if (!grammar.empty()) {
+        llama_sampler *g = llama_sampler_init_grammar(vocab, grammar.c_str(), "root");
+        if (!g) { llama_sampler_free(smpl); return false; }
+        llama_sampler_chain_add(smpl, g);                       // only grammar-legal tokens survive
+    } else {
+        // Free text: greedy alone can fall into repeating itself, so recent tokens cost a little.
+        llama_sampler_chain_add(smpl, llama_sampler_init_penalties(llama_vocab_n_tokens(vocab), 64, 1.1f, 0.0f, 0.0f));
+    }
     llama_sampler_chain_add(smpl, llama_sampler_init_greedy()); // deterministic
 
     bool ok = decode(s->ctx, suf);
