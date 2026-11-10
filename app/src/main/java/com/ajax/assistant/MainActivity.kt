@@ -14,7 +14,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
-import android.graphics.Typeface
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -133,18 +132,10 @@ class MainActivity : Activity() {
             })
         })
 
-        // The wordmark, drawn in plain characters.
-        root.addView(TextView(this).apply {
-            text = LOGO
+        // The wordmark: block letters, drawn on a grid (see LogoView for why it isn't text).
+        root.addView(LogoView(this, LOGO, LOGO_GREEN).apply {
             contentDescription = "Ajax"
-            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-            textSize = 5.5f
-            setTextColor(LOGO_GREEN)
-            includeFontPadding = false
-            setLineSpacing(0f, 0.95f)
-            setHorizontallyScrolling(true)
             setPadding(0, dp(12), 0, dp(8))
-            // Lines differ in length: the block is centred as a whole, never line by line.
         }, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { gravity = Gravity.CENTER_HORIZONTAL })
         root.addView(Ui.text(this, 14f, Ui.MUTED).apply {
             text = "Hold the side key, or say “Ajax”."
@@ -680,32 +671,14 @@ class MainActivity : Activity() {
     }
 
     private companion object {
-        /** The secondary logo: the slanted wordmark, drawn with asterisks (56 columns, 24 rows). */
+        /** The secondary logo: the wordmark in block letters with a drawn shadow. */
         val LOGO = """
-                                                   ***
-                                                ******
-                                      ******    *****
-                              *******  ******  ******
-                       *     ********   ************
-                   *****     *********   ***********
-         *****     *****    **********    *********
-      ********    ******    **********     *******
-      ********    ******    **** *****      ******
-     *********    ******   ***** ******     *******
-     **********   ******   *****  *****    *********
-    ***** *****   ******  *****   *****   ***********
-    ***** *****   ******  ***** *******   ***** ******
-    ***** ******  *****   ************** ******  ******
-   *****   *****  *****  *********************    *****
-   *****  ******  *****  ********  **********
-  **************  ***** *******     *****
-  *************** ***** ******
-  ********* ***** *********
- *******    ***** *****
- ******           ****
-******           *****
-               *****
-               ***
+ █████╗      ██╗ █████╗ ██╗  ██╗
+██╔══██╗     ██║██╔══██╗╚██╗██╔╝
+███████║     ██║███████║ ╚███╔╝
+██╔══██║██   ██║██╔══██║ ██╔██╗
+██║  ██║╚█████╔╝██║  ██║██╔╝ ██╗
+╚═╝  ╚═╝ ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═╝
 """.trim('\n')
         /** The green of the app icon. */
         const val LOGO_GREEN = 0xFFA5C736.toInt()
