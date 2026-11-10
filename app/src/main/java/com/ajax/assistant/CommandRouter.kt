@@ -115,7 +115,7 @@ object CommandRouter {
                 "and answer your calls. Try saying: flashlight on.")
         Regex("^who (?:made|created|built|programmed|designed) (?:you|u)$|^who is your (?:creator|maker|owner|boss)$|" +
             "^who do you (?:belong to|work for)$").matches(t) ->
-            say("about-maker", "Franklin built me, and I work for him.")
+            say("about-maker", "Franklin built me, and I work for Franklin.")
         Regex("^how (?:are|r) (?:you|u)(?: doing| today)?$|^hows it going$|^how do you feel$|^are you (?:ok|okay|good)$").matches(t) ->
             say("about-mood", "I'm good, and ready when you are.")
         Regex("^(?:hi|hello|hey|hey there|hi there|yo|good (?:morning|afternoon|evening))$").matches(t) ->
