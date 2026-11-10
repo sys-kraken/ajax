@@ -14,20 +14,24 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.graphics.Typeface
 import android.view.Gravity
-import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-import android.widget.Button
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import com.ajax.assistant.Ui.dp
 
-class MainActivity : Activity(), SpeechInput.Callback {
+/**
+ * Ajax's settings, opened from Settings > Apps > Ajax. Grouped by what each setting is about:
+ * setup, wake words, your voice, calls, speech, understanding, system, advanced, about.
+ */
+class MainActivity : Activity() {
 
     private class Step(
         val label: String,
@@ -73,9 +77,6 @@ class MainActivity : Activity(), SpeechInput.Callback {
         )
     }
 
-    private lateinit var speech: SpeechInput
-    private lateinit var speaker: Speaker
-    private lateinit var brain: Brain
     private lateinit var setupRow: Ui.Row
     private lateinit var stepRows: LinearLayout
     private lateinit var engine: Ui.Row
@@ -87,13 +88,18 @@ class MainActivity : Activity(), SpeechInput.Callback {
     private lateinit var callsRow: Ui.Row
     private lateinit var teachRow: Ui.Row
     private lateinit var lockRow: Ui.Row
+    private lateinit var quietTorchRow: Ui.Row
+    private lateinit var quietWakeRow: Ui.Row
+    private val wordRows = LinkedHashMap<WakeWords.Word, Ui.Row>()
     private lateinit var lockSwitch: android.widget.Switch
     private lateinit var callsSwitch: android.widget.Switch
     private lateinit var hint: TextView
     private lateinit var grant: Ui.Row
-    private lateinit var talk: Button
-    private lateinit var heard: TextView
-    private lateinit var result: TextView
+    private lateinit var agreementRow: Ui.Row
+    private lateinit var detectorsRow: Ui.Row
+    private lateinit var logRow: Ui.Row
+    /** Sections that only matter while Ajax listens for its wake words. */
+    private val wakeOnly = mutableListOf<View>()
     private lateinit var modelStatus: Ui.Row
     private lateinit var modelButton: Ui.Row
     private val main = Handler(Looper.getMainLooper())
@@ -102,9 +108,6 @@ class MainActivity : Activity(), SpeechInput.Callback {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        speech = SpeechInput(this, this)
-        speaker = Speaker(this)
-        brain = Brain(this)
         Actions.watchTorch(this)
         val prefs = getSharedPreferences(Prefs.NAME, MODE_PRIVATE)
 
@@ -123,33 +126,51 @@ class MainActivity : Activity(), SpeechInput.Callback {
                 setOnClickListener { finish() }
             })
             addView(Ui.text(this@MainActivity, 22f, bold = true).apply {
-                text = "Ajax"
+                text = "Settings"
                 setPadding(dp(8), 0, 0, 0)
             })
-        }, Ui.below(this, 12))
+        })
 
-        talk = Ui.button(this, TALK_LABEL).apply {
-            setOnTouchListener { v, e ->
-                when (e.action) {
-                    MotionEvent.ACTION_DOWN -> { v.isPressed = true; text = "Listening"; startListening(); true }
-                    MotionEvent.ACTION_UP -> { v.isPressed = false; text = TALK_LABEL; v.performClick(); speech.stopListening(); true }
-                    MotionEvent.ACTION_CANCEL -> { v.isPressed = false; text = TALK_LABEL; speech.stopListening(); true }
-                    else -> false
-                }
+        // The wordmark, drawn in plain characters.
+        root.addView(TextView(this).apply {
+            text = LOGO
+            contentDescription = "Ajax"
+            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+            textSize = 7f
+            setTextColor(LOGO_GREEN)
+            includeFontPadding = false
+            setLineSpacing(0f, 0.95f)
+            setHorizontallyScrolling(true)
+            setPadding(0, dp(12), 0, dp(8))
+            // Lines differ in length: the block is centred as a whole, never line by line.
+        }, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { gravity = Gravity.CENTER_HORIZONTAL })
+        root.addView(Ui.text(this, 14f, Ui.MUTED).apply {
+            text = "Hold the side key, or say “Ajax”."
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(0, 0, 0, dp(12))
+        })
+
+        /** A titled group of rows; returns the whole section so it can be hidden as one. */
+        fun section(title: String, build: LinearLayout.() -> Unit): View = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(Ui.header(this@MainActivity, title))
+            addView(Ui.group(this@MainActivity).apply(build))
+            root.addView(this, Ui.below(this@MainActivity, 4))
+        }
+
+        fun toggle(group: LinearLayout, label: String, sub: String, key: String, default: Boolean, changed: () -> Unit = {}): Ui.Row {
+            val switch = Ui.switch(this).apply {
+                isChecked = prefs.getBoolean(key, default)
+                setOnCheckedChangeListener { _, on -> prefs.edit().putBoolean(key, on).apply(); changed() }
+            }
+            return Ui.row(this, label, sub, end = switch).also { r ->
+                r.onClick { switch.toggle() }
+                Ui.addRow(group, r.view)
             }
         }
-        root.addView(talk, LinearLayout.LayoutParams(MATCH_PARENT, dp(72)).apply { bottomMargin = dp(12) })
 
-        root.addView(Ui.card(this).apply {
-            heard = Ui.text(this@MainActivity, 14f, Ui.MUTED).also { addView(it) }
-            result = Ui.text(this@MainActivity, 17f).apply {
-                hint = "Hold the button or the side key, then speak."
-                setHintTextColor(Ui.MUTED)
-            }.also { addView(it) }
-        }, Ui.below(this, 12))
-
-        root.addView(Ui.group(this).apply {
-            setupRow = Ui.row(this@MainActivity, "Setup").also {
+        section("Setup") {
+            setupRow = Ui.row(this@MainActivity, "Permissions").also {
                 it.onClick { showDetails = !showDetails; refreshSteps() }
                 Ui.addRow(this, it.view)
             }
@@ -161,18 +182,9 @@ class MainActivity : Activity(), SpeechInput.Callback {
                 it.onClick { onGrantClicked() }
                 addView(it.view)
             }
-        }, Ui.below(this, 12))
+        }
 
-        root.addView(Ui.group(this).apply {
-            modelStatus = Ui.row(this@MainActivity, "Smart understanding").also { Ui.addRow(this, it.view) }
-            modelButton = Ui.row(this@MainActivity, "").also {
-                it.title.setTextColor(Ui.ACCENT)
-                it.onClick { onModelClicked() }
-                Ui.addRow(this, it.view)
-            }
-        }, Ui.below(this, 12))
-
-        root.addView(Ui.group(this).apply {
+        section("Wake words") {
             wakeSwitch = Ui.switch(this@MainActivity).apply {
                 isChecked = WakeService.enabled(this@MainActivity)
                 setOnCheckedChangeListener { _, on -> setWake(on) }
@@ -182,17 +194,20 @@ class MainActivity : Activity(), SpeechInput.Callback {
                 Ui.addRow(this, it.view)
             }
             heardRow = Ui.row(this@MainActivity, "Last heard", "Say “Ajax” or “lumos” to test").also { Ui.addRow(this, it.view) }
-            callsSwitch = Ui.switch(this@MainActivity).apply {
-                isChecked = prefs.getBoolean(Prefs.CALLS, false)
-                setOnCheckedChangeListener { _, on -> setCalls(on) }
-            }
-            callsRow = Ui.row(this@MainActivity, "Announce callers", end = callsSwitch).also {
-                it.onClick { callsSwitch.toggle() }
-                Ui.addRow(this, it.view)
-            }
+            quietTorchRow = toggle(this, "Ignore flashlight words during audio", "", Prefs.QUIET_TORCH, false) { showWake() }
+            quietWakeRow = toggle(this, "Ignore “Ajax” during audio", "", Prefs.QUIET_WAKE, false) { showWake() }
+        }
+
+        wakeOnly += section("Your voice") {
             teachRow = Ui.row(this@MainActivity, "Teach Ajax your voice").also {
                 it.onClick { teachVoice() }
                 Ui.addRow(this, it.view)
+            }
+            for (w in listOf(WakeWords.Word.LUMOS, WakeWords.Word.FLASHLIGHT)) {
+                wordRows[w] = Ui.row(this@MainActivity, "Teach Ajax “${w.say}”").also {
+                    it.onClick { teachVoice(w) }
+                    Ui.addRow(this, it.view)
+                }
             }
             lockSwitch = Ui.switch(this@MainActivity).apply {
                 isChecked = prefs.getBoolean(Prefs.VOICE_LOCK, false)
@@ -202,36 +217,68 @@ class MainActivity : Activity(), SpeechInput.Callback {
                 it.onClick { lockSwitch.toggle() }
                 Ui.addRow(this, it.view)
             }
+        }
+
+        wakeOnly += section("Calls") {
+            callsSwitch = Ui.switch(this@MainActivity).apply {
+                isChecked = prefs.getBoolean(Prefs.CALLS, false)
+                setOnCheckedChangeListener { _, on -> setCalls(on) }
+            }
+            callsRow = Ui.row(this@MainActivity, "Announce callers", end = callsSwitch).also {
+                it.onClick { callsSwitch.toggle() }
+                Ui.addRow(this, it.view)
+            }
+        }
+
+        section("Speech") {
+            toggle(this, "Speak replies", "", Prefs.SPEAK, true)
+            toggle(this, "Online speech recognition", "Audio may go to Google", Prefs.ONLINE, false)
+            engine = Ui.row(this@MainActivity, "Speech engine").also { Ui.addRow(this, it.view) }
+            Ui.addRow(this, Ui.row(this@MainActivity, "Voice settings", "The phone's voice input page").also {
+                it.onClick {
+                    try { startActivity(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS)) }
+                    catch (e: ActivityNotFoundException) { say("This phone has no voice settings page.") }
+                }
+            }.view)
+        }
+
+        section("Understanding") {
+            modelStatus = Ui.row(this@MainActivity, "Smart understanding").also { Ui.addRow(this, it.view) }
+            modelButton = Ui.row(this@MainActivity, "").also {
+                it.title.setTextColor(Ui.ACCENT)
+                it.onClick { onModelClicked() }
+                Ui.addRow(this, it.view)
+            }
+        }
+
+        section("System") {
             batteryRow = Ui.row(this@MainActivity, "Run in the background").also {
                 it.onClick { allowBackground() }
                 Ui.addRow(this, it.view)
             }
-        }, Ui.below(this, 12))
-
-        root.addView(Ui.group(this).apply {
-            fun option(label: String, sub: String, key: String, default: Boolean) {
-                val toggle = Ui.switch(this@MainActivity).apply {
-                    isChecked = prefs.getBoolean(key, default)
-                    setOnCheckedChangeListener { _, on -> prefs.edit().putBoolean(key, on).apply() }
-                }
-                Ui.addRow(this, Ui.row(this@MainActivity, label, sub, end = toggle).also { r -> r.onClick { toggle.toggle() } }.view)
-            }
-            option("Speak replies", "", Prefs.SPEAK, true)
-            option("Online speech recognition", "Audio may go to Google", Prefs.ONLINE, false)
-            engine = Ui.row(this@MainActivity, "Speech engine").also { Ui.addRow(this, it.view) }
             accessMode = Ui.row(this@MainActivity, "Accessibility").also { Ui.addRow(this, it.view) }
-            Ui.addRow(this, Ui.row(this@MainActivity, "Voice settings").also {
-                it.onClick {
-                    try { startActivity(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS)) }
-                    catch (e: ActivityNotFoundException) { show(Result(false, "This phone has no voice settings page.")) }
-                }
-            }.view)
-        }, Ui.below(this, 12))
+        }
 
-        root.addView(Ui.group(this).apply {
-            val version = packageManager.getPackageInfo(packageName, 0).versionName.orEmpty()
-            Ui.addRow(this, Ui.row(this@MainActivity, "Version", version).view)
-        })
+        wakeOnly += section("Advanced") {
+            agreementRow = Ui.row(this@MainActivity, "Detector agreement").also {
+                it.onClick { chooseAgreement() }
+                Ui.addRow(this, it.view)
+            }
+            detectorsRow = Ui.row(this@MainActivity, "Trained detectors").also { Ui.addRow(this, it.view) }
+            logRow = Ui.row(this@MainActivity, "Wake log").also {
+                it.onClick { clearLog() }
+                Ui.addRow(this, it.view)
+            }
+        }
+
+        section("About") {
+            val info = packageManager.getPackageInfo(packageName, 0)
+            @Suppress("DEPRECATION")
+            val build = if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()
+            val debug = applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
+            Ui.addRow(this, Ui.row(this@MainActivity, "Version", info.versionName.orEmpty()).view)
+            Ui.addRow(this, Ui.row(this@MainActivity, "Build", "$build, ${if (debug) "debug" else "release"}").view)
+        }
 
         setContentView(ScrollView(this).apply {
             setBackgroundColor(Ui.BACKGROUND)
@@ -256,10 +303,16 @@ class MainActivity : Activity(), SpeechInput.Callback {
         handleAssist(intent)
     }
 
-    /** Fallback path: some phones send the side key as ACTION_ASSIST to this activity. Listen at once. */
+    /**
+     * Some phones send the side key here as ACTION_ASSIST when Ajax isn't the digital assistant.
+     * Talking happens in the overlay, which only the digital assistant gets: open it, or say how.
+     */
     private fun handleAssist(i: Intent?) {
-        if (i?.action == Intent.ACTION_ASSIST) main.post { startListening() }
+        if (i?.action != Intent.ACTION_ASSIST) return
+        if (!AjaxInteractionService.listen()) say("Set Ajax as the digital assistant under Setup to talk to it.")
     }
+
+    private fun say(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
 
     override fun onResume() {
         super.onResume()
@@ -318,15 +371,7 @@ class MainActivity : Activity(), SpeechInput.Callback {
         WakeModel.listener = null
         VoiceModel.listener = null
         WakeService.onHeard = null
-        // Leaving the screen (e.g. a command opened Settings) must not turn into an error.
-        speech.cancel()
         super.onPause()
-    }
-
-    override fun onDestroy() {
-        speech.destroy()
-        speaker.shutdown()
-        super.onDestroy()
     }
 
     private fun setWake(on: Boolean) {
@@ -366,9 +411,47 @@ class MainActivity : Activity(), SpeechInput.Callback {
             },
         )
         heardRow.view.visibility = if (on && WakeService.running) View.VISIBLE else View.GONE
-        callsRow.view.visibility = if (on) View.VISIBLE else View.GONE
-        teachRow.view.visibility = if (on) View.VISIBLE else View.GONE
-        lockRow.view.visibility = if (on) View.VISIBLE else View.GONE
+        for (v in wakeOnly) v.visibility = if (on) View.VISIBLE else View.GONE
+        val prefs = getSharedPreferences(Prefs.NAME, MODE_PRIVATE)
+        val quietTorch = prefs.getBoolean(Prefs.QUIET_TORCH, false)
+        val quietWake = prefs.getBoolean(Prefs.QUIET_WAKE, false)
+        quietTorchRow.view.visibility = if (on) View.VISIBLE else View.GONE
+        quietWakeRow.view.visibility = if (on) View.VISIBLE else View.GONE
+        // With both on, nothing analyses sound while audio plays; with one, only that word's detector rests.
+        val rests = if (quietTorch && quietWake) " Ajax stops analysing sound while audio plays, which saves battery." else ""
+        quietTorchRow.sub(
+            if (quietTorch) "On. While music or a video plays on the phone, lumos, nox and flashlight do nothing and their detectors rest.$rests"
+            else "Off. Lumos, nox and flashlight also work while music or a video plays on the phone.",
+        )
+        quietWakeRow.sub(
+            if (quietWake) "On. While music or a video plays on the phone, saying Ajax does nothing and its detector rests. Use the side key.$rests"
+            else "Off. Saying Ajax also works while music or a video plays on the phone.",
+        )
+        val (name, score) = WakeWords.AGREEMENT.getOrElse(prefs.getInt(Prefs.AGREEMENT, WakeWords.DEFAULT_AGREEMENT)) { WakeWords.AGREEMENT[WakeWords.DEFAULT_AGREEMENT] }
+        agreementRow.sub("$name. A keyword counts when its trained detector scores $score or more and the recogniser hears the same word.")
+        val loaded = WakeService.detectors
+        detectorsRow.sub(
+            when {
+                loaded == null -> "Not listening"
+                loaded.isEmpty() -> "None loaded. The recogniser decides alone."
+                else -> loaded.joinToString(", ") { it.say } + " loaded. Others rest on the recogniser alone."
+                    .let { if (loaded.size == WakeWords.Word.values().size) " loaded" else it }
+            },
+        )
+        val lines = try { logFile().takeIf { it.exists() }?.useLines { it.count() } ?: 0 } catch (e: java.io.IOException) { 0 }
+        logRow.sub(
+            if (lines == 0) "Empty. Each phrase heard is logged as a keyword or unknown, with scores, never audio."
+            else "$lines phrases logged as keyword or unknown, with scores, never audio. Tap to clear.",
+        )
+        for ((w, row) in wordRows) {
+            if (teaching != w) {
+                val n = VoiceSamples.count(this, w)
+                row.sub(
+                    if (n == 0) "Say “${w.say}” ${VoiceSamples.TAKES} times, so Ajax can tell your ${w.say} from other sounds."
+                    else "$n recordings saved. Tap to record more.",
+                )
+            }
+        }
         val vm = VoiceModel.state(this)
         lockRow.sub(
             when {
@@ -381,7 +464,7 @@ class MainActivity : Activity(), SpeechInput.Callback {
             },
             if (lockSwitch.isChecked && VoiceSamples.count(this) == 0) Ui.ACCENT else Ui.MUTED,
         )
-        if (!teaching) {
+        if (teaching != WakeWords.Word.AJAX) {
             val n = VoiceSamples.count(this)
             teachRow.sub(if (n == 0) "Say \u201cAjax\u201d ${VoiceSamples.TAKES} times so it learns your voice." else "$n recordings saved. Tap to record more.")
         }
@@ -398,14 +481,48 @@ class MainActivity : Activity(), SpeechInput.Callback {
         batteryRow.sub(if (free) "Allowed" else "Tap so the phone doesn't stop Ajax listening", if (free) Ui.MUTED else Ui.ACCENT)
     }
 
-    private var teaching = false
+    private fun logFile() = java.io.File(filesDir, "wake-scores.tsv")
 
-    private fun teachVoice() {
-        if (teaching) return
+    private fun dialog() = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+
+    private fun chooseAgreement() {
+        val prefs = getSharedPreferences(Prefs.NAME, MODE_PRIVATE)
+        val labels = WakeWords.AGREEMENT.map { (name, score) ->
+            when (name) {
+                "Strict" -> "Strict ($score): fewest false triggers, may miss quiet or far speech"
+                "Relaxed" -> "Relaxed ($score): catches more quiet speech, more false triggers"
+                else -> "$name ($score): recommended"
+            }
+        }.toTypedArray()
+        dialog().setTitle("Detector agreement")
+            .setSingleChoiceItems(labels, prefs.getInt(Prefs.AGREEMENT, WakeWords.DEFAULT_AGREEMENT)) { d, which ->
+                prefs.edit().putInt(Prefs.AGREEMENT, which).apply()
+                d.dismiss()
+                showWake()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun clearLog() {
+        if (!logFile().exists()) return
+        dialog().setTitle("Clear the wake log?")
+            .setMessage("The log is what false triggers are traced with. This cannot be undone.")
+            .setPositiveButton("Clear") { _, _ -> logFile().delete(); showWake() }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /** The word being recorded right now, if any. */
+    private var teaching: WakeWords.Word? = null
+
+    private fun teachVoice(word: WakeWords.Word = WakeWords.Word.AJAX) {
+        if (teaching != null) return
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
-        teaching = true
-        VoiceSamples.record(this, progress = { teachRow.sub(it, Ui.ACCENT) }) {
-            teaching = false
+        teaching = word
+        val row = wordRows[word] ?: teachRow
+        VoiceSamples.record(this, word, progress = { row.sub(it, Ui.ACCENT) }) {
+            teaching = null
             showWake()
         }
     }
@@ -438,7 +555,7 @@ class MainActivity : Activity(), SpeechInput.Callback {
         try {
             startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
         } catch (e: ActivityNotFoundException) {
-            show(Result(false, "Set Ajax to Unrestricted in Settings > Apps > Ajax > Battery."))
+            say("Set Ajax to Unrestricted in Settings > Apps > Ajax > Battery.")
         }
     }
 
@@ -479,7 +596,6 @@ class MainActivity : Activity(), SpeechInput.Callback {
         if (next == null) openSettingsMode = false
         hint.text = next?.hint.orEmpty()
         grant.title.text = if (openSettingsMode) "Open app settings (permission was blocked)" else "Set up: ${next?.label}"
-        talk.isEnabled = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
     }
 
     private fun onGrantClicked() {
@@ -497,7 +613,7 @@ class MainActivity : Activity(), SpeechInput.Callback {
         try {
             startActivity(step.intent!!())
         } catch (e: ActivityNotFoundException) {
-            show(Result(false, "This phone has no settings page for that. Open it from Settings by hand."))
+            say("This phone has no settings page for that. Open it from Settings by hand.")
         }
     }
 
@@ -509,53 +625,35 @@ class MainActivity : Activity(), SpeechInput.Callback {
         refreshSteps()
     }
 
-    private fun startListening() {
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
-        heard.text = ""
-        result.text = ""
-        speech.start()
-    }
-
-    override fun onListening(mode: String) {
-        heard.text = "Listening ($mode)..."
-    }
-
-    override fun onPartial(text: String) {
-        heard.text = "“$text”"
-    }
-
-    override fun onResults(candidates: List<String>) {
-        heard.text = "“${candidates.first()}”"
-        brain.handle(candidates, onThinking = { result.text = "Thinking…" }) { act(it) }
-    }
-
-    private fun act(reply: Brain.Reply) {
-        if (isFinishing || isDestroyed) return
-        heard.text = "“${brain.heard}”"
-        val after = reply.afterHide
-        when {
-            after != null -> {
-                result.text = reply.result.message
-                main.postDelayed({ Access.run(this, after) }, 450)
-            }
-            reply.listenAgain -> {
-                result.text = reply.result.message
-                speaker.speak(reply.result.message) { speech.start() }
-            }
-            else -> show(reply.result)
-        }
-    }
-
-    override fun onError(message: String) {
-        show(Result(false, message))
-    }
-
-    private fun show(r: Result) {
-        result.text = r.message
-        speaker.speak(r.message)
-    }
-
     private companion object {
-        const val TALK_LABEL = "Hold to talk"
+        /** The secondary logo: the slanted wordmark, drawn with asterisks (56 columns, 24 rows). */
+        val LOGO = """
+                                                   ***
+                                                ******
+                                      ******    *****
+                              *******  ******  ******
+                       *     ********   ************
+                   *****     *********   ***********
+         *****     *****    **********    *********
+      ********    ******    **********     *******
+      ********    ******    **** *****      ******
+     *********    ******   ***** ******     *******
+     **********   ******   *****  *****    *********
+    ***** *****   ******  *****   *****   ***********
+    ***** *****   ******  ***** *******   ***** ******
+    ***** ******  *****   ************** ******  ******
+   *****   *****  *****  *********************    *****
+   *****  ******  *****  ********  **********
+  **************  ***** *******     *****
+  *************** ***** ******
+  ********* ***** *********
+ *******    ***** *****
+ ******           ****
+******           *****
+               *****
+               ***
+""".trim('\n')
+        /** The green of the app icon. */
+        const val LOGO_GREEN = 0xFFA5C736.toInt()
     }
 }

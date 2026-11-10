@@ -47,16 +47,14 @@ class WakeService : Service() {
         )
         private const val FRONT_CHECK_MS = 1_000L
 
-        /**
-         * Watch-only: the trained detector scores every phrase and the score is shown and logged,
-         * but the keyword recogniser still decides about "Ajax", until the detector proves itself.
-         */
-        const val DETECTOR_WATCH_ONLY = true
-
         /** Wait after Ajax stops talking, so the end of its own voice isn't heard as a command. */
         private const val RESUME_AFTER_MS = 800L
 
         @Volatile var running = false
+            private set
+
+        /** The words with a trained detector loaded, for the settings screen; null while not listening. */
+        @Volatile var detectors: List<WakeWords.Word>? = null
             private set
 
         /** The last thing heard, for the settings screen (kept in memory only). */
@@ -243,19 +241,21 @@ class WakeService : Service() {
             try { org.vosk.SpeakerModel(VoiceModel.path(this).absolutePath) } catch (e: Exception) { VoiceModel.discard(this); null }
         } else null
         val spotter = Spotter(model, WakeWords.phrases, speakers)
-        // The detector trained on "Ajax"; without it, "Ajax" falls back to the keyword recogniser.
+        // The detectors trained on each word; a keyword needs both them and the recogniser to agree.
+        // Without them the recogniser decides alone.
         val detector = AjaxDetector.open(this)
-        val recent = ArrayDeque<Float>()          // detector scores during the current phrase
-        val backlog = ArrayDeque<ByteArray>()     // the last 2 s of audio, for the detector's context
-        var detecting = false
+        val ears = WakeListener(spotter, detector)
         main.post { usingDetector = detector != null }
+        detectors = WakeWords.Word.values().filter { detector?.has(it) == true }
+        val prefs = getSharedPreferences(Prefs.NAME, MODE_PRIVATE)
+        val audio = getSystemService(android.media.AudioManager::class.java)
+        var nextQuietCheck = 0L
+        var resting = false   // every keyword is ignored while audio plays: nothing listens
         val callSpotter = Spotter(model, CallVoice.phrases) // only while the phone rings
         var forCall = false
         val buf = ByteArray(Spotter.CHUNK_BYTES)
         var mic: AudioRecord? = null
         var nextTestCheck = 0L
-        var nextMediaCheck = 0L
-        var mediaPlaying = false
         try {
             while (alive) {
                 val now = android.os.SystemClock.uptimeMillis()
@@ -278,11 +278,7 @@ class WakeService : Service() {
                 if (paused) {
                     if (mic != null) {
                         closeMic(mic); mic = null
-                        spotter.reset()
-                        detector?.reset()
-                        recent.clear()
-                        backlog.clear()
-                        detecting = false
+                        ears.reset()
                     }
                     Thread.sleep(100)
                     continue
@@ -296,38 +292,22 @@ class WakeService : Service() {
                 if (n <= 0) continue
                 if (CallVoice.listening != forCall) {
                     forCall = CallVoice.listening
-                    spotter.reset(); callSpotter.reset()
+                    ears.reset(); callSpotter.reset()
                 }
-                val active = if (forCall) callSpotter else spotter
-                val result = active.feed(buf, n)
-                // The detector costs real CPU, so it runs only while someone talks: when talking
-                // starts it first catches up on the last 2 s, then follows the phrase to its end.
-                // While only watching, the detector sits out audio playing on the phone: the constant
-                // sound would keep it running for nothing.
-                if (now >= nextMediaCheck) {
-                    nextMediaCheck = now + 1_000
-                    mediaPlaying = getSystemService(android.media.AudioManager::class.java)?.isMusicActive == true
+                // The "ignore during audio" settings also spare the work: a word that is ignored
+                // gets no detector, and with every keyword ignored nothing analyses the sound.
+                if (now >= nextQuietCheck) {
+                    nextQuietCheck = now + 1_000
+                    val playing = audio?.isMusicActive == true
+                    val quietTorch = prefs.getBoolean(Prefs.QUIET_TORCH, false)
+                    val quietWake = prefs.getBoolean(Prefs.QUIET_WAKE, false)
+                    detector?.let { WakeWords.wanted(playing, quietTorch, quietWake).copyInto(it.active) }
+                    val rest = WakeWords.nothingToHear(playing, quietTorch, quietWake)
+                    if (rest != resting) { resting = rest; ears.reset() }
                 }
-                if (detector != null && !forCall && !(DETECTOR_WATCH_ONLY && mediaPlaying)) {
-                    if (active.isSpeaking || result != null) {
-                        if (!detecting) {
-                            detecting = true
-                            detector.reset()
-                            recent.clear()
-                            for (b in backlog) detector.feed(b, b.size)
-                        }
-                        detector.feed(buf, n)
-                        recent.addLast(detector.score)
-                    } else {
-                        detecting = false
-                    }
-                    backlog.addLast(buf.copyOf(n))
-                    if (backlog.size > 40) backlog.removeFirst()
-                }
+                if (resting && !forCall) continue
+                val result = if (forCall) callSpotter.feed(buf, n) else ears.feed(buf, n)
                 result?.let { h ->
-                    h.wakeScore = recent.maxOrNull() ?: 0f
-                    recent.clear()
-                    detecting = false
                     val threshold = detector?.threshold ?: 1f
                     main.post { heard(h, threshold) }
                 }
@@ -341,6 +321,7 @@ class WakeService : Service() {
             detector?.close()
             speakers?.close()
             speakers = null
+            detectors = null
             model.close()
         }
     }
@@ -390,49 +371,58 @@ class WakeService : Service() {
         val wavs = dir.listFiles { f -> f.name.endsWith(".wav") }?.sortedBy { it.name } ?: return
         if (wavs.isEmpty()) return
         val out = StringBuilder()
+        val prefs = getSharedPreferences(Prefs.NAME, MODE_PRIVATE)
+        val quietTorch = prefs.getBoolean(Prefs.QUIET_TORCH, false)
+        val quietWake = prefs.getBoolean(Prefs.QUIET_WAKE, false)
+        val agree = WakeWords.agreement(prefs.getInt(Prefs.AGREEMENT, WakeWords.DEFAULT_AGREEMENT))
         Spotter(model, WakeWords.phrases, speakers).use { s ->
-            for (f in wavs) {
-                val audio = f.readBytes().let { it.copyOfRange(minOf(44, it.size), it.size) }
-                val heard = mutableListOf<String>()
-                AjaxDetector.open(this)?.use { d ->
-                    var best = 0f
+            val d = AjaxDetector.open(this)
+            try {
+                val ears = WakeListener(s, d)
+                for (f in wavs) {
+                    val audio = f.readBytes().let { it.copyOfRange(minOf(44, it.size), it.size) }
+                    val heard = mutableListOf<String>()
+                    ears.reset()
+                    val nanos0 = ears.detectorNanos
+                    val cpu0 = android.os.SystemClock.currentThreadTimeMillis()
+                    // Each phrase as the listener would judge it: in a quiet room, and with audio playing.
+                    val note = { h: Spotter.Heard ->
+                        val quiet = WakeWords.decide(h.text, h.confidence, false, h.scores, quietTorch, quietWake, agree)
+                        val playing = WakeWords.decide(h.text, h.confidence, true, h.scores, quietTorch, quietWake, agree)
+                        heard += describe(h) + " quiet=" + (quiet?.name ?: "none") + " playing=" + (playing?.name ?: "none")
+                    }
                     var i = 0
                     while (i < audio.size) {
                         val n = minOf(Spotter.CHUNK_BYTES, audio.size - i)
-                        d.feed(audio.copyOfRange(i, i + n), n); best = maxOf(best, d.score); i += n
+                        ears.feed(audio.copyOfRange(i, i + n), n)?.let(note)
+                        i += n
                     }
                     val silence = ByteArray(Spotter.CHUNK_BYTES)
-                    repeat(30) { d.feed(silence, silence.size); best = maxOf(best, d.score) }
-                    heard += "detector ${"%.2f".format(best)} (th ${d.threshold})"
+                    repeat(20) { ears.feed(silence, silence.size)?.let(note) }
+                    val seconds = audio.size / (RATE * 2.0)
+                    out.append(f.name).append(" = ").append(heard.joinToString(" | "))
+                        .append(" # ").append("%.1f".format(seconds)).append(" s audio, detectors ")
+                        .append((ears.detectorNanos - nanos0) / 1_000_000).append(" ms, all ")
+                        .append(android.os.SystemClock.currentThreadTimeMillis() - cpu0).append(" ms cpu")
+                        .appendLine()
+                    f.delete()
                 }
-                var i = 0
-                while (i < audio.size) {
-                    val n = minOf(Spotter.CHUNK_BYTES, audio.size - i)
-                    val t0 = System.nanoTime()
-                    s.feed(audio.copyOfRange(i, i + n), n)?.let { heard += describe(it) + " in " + (System.nanoTime() - t0) / 1_000_000 + " ms" }
-                    i += n
-                }
-                val silence = ByteArray(Spotter.CHUNK_BYTES)
-                repeat(20) {
-                    val t0 = System.nanoTime()
-                    s.feed(silence, silence.size)?.let { heard += describe(it) + " in " + (System.nanoTime() - t0) / 1_000_000 + " ms" }
-                }
-                out.append(f.name).append(" = ").append(heard.joinToString(" | "))
-                    .append(" -> ").append(heard.filterNot { it.startsWith("detector") }.map { t ->
-                        val kind = WakeWords.match(t.substringBefore(" ("))
-                        val conf = Regex("""\((\d+\.\d+)\)""").find(t)?.groupValues?.get(1)?.toDoubleOrNull() ?: 0.0
-                        if (kind == null) "none" else if (conf >= WakeWords.minConfidence(kind, false)) kind.name else "$kind-rejected"
-                    }).appendLine()
-                f.delete()
+            } finally {
+                d?.close()
             }
         }
         java.io.File(dir, "results.txt").writeText(out.toString())
     }
 
+    private fun scoreText(scores: FloatArray?): String? = scores?.let { s ->
+        WakeWords.Word.values().filter { s[it.ordinal] >= 0f }
+            .joinToString(", ") { it.say + " " + "%.2f".format(s[it.ordinal]) }.takeIf { it.isNotEmpty() }
+    }
+
     private fun describe(h: Spotter.Heard): String {
         val sim = VoiceLock.similarity(this, h.voice)
         val voice = if (sim == null) "" else " voice " + "%.2f".format(sim) + "/" + h.voiceFrames
-        return h.text + " (" + "%.2f".format(h.confidence) + ")" + voice
+        return h.text + " (" + "%.2f".format(h.confidence) + ")" + voice + " [" + (scoreText(h.scores) ?: "no detector") + "]"
     }
 
     @Suppress("MissingPermission")
@@ -469,7 +459,7 @@ class WakeService : Service() {
         MicGuard.ownRecording(r.audioSessionId, open = false)
     }
 
-    /** True when the trained detector decides about "Ajax" (shown in settings). */
+    /** True when the trained detectors are running (their scores are shown in settings). */
     private var usingDetector = false
 
     /** Loaded on the audio thread when the voice model is downloaded. */
@@ -477,49 +467,48 @@ class WakeService : Service() {
 
     private fun heard(h: Spotter.Heard, threshold: Float = 1f) {
         val sim = VoiceLock.similarity(this, h.voice)
-        val notes = listOfNotNull(
-            if (usingDetector) "Ajax score ${"%.2f".format(h.wakeScore)}" else null,
-            sim?.let { "your voice ${"%.2f".format(it)}" },
-        )
+        val notes = listOfNotNull(scoreText(h.scores), sim?.let { "your voice ${"%.2f".format(it)}" })
         onHeard?.invoke(if (notes.isEmpty()) h.text else "${h.text}  (${notes.joinToString(", ")})")
         if (paused) return
         if (CallVoice.listening) { CallVoice.heard(this, h.text); return }
-        logScore(h, threshold)
-        // Voice lock: keywords count only in your voice (a video or song saying them does nothing).
-        if (!VoiceLock.accepts(this, h)) return
-        if (usingDetector && !DETECTOR_WATCH_ONLY) {
-            // Said on its own (a short utterance) and the detector is sure: that's "Ajax".
-            val playing = getSystemService(android.media.AudioManager::class.java)?.isMusicActive == true
-            val needed = if (playing) threshold + (1 - threshold) * 0.6f else threshold
-            if (h.wakeScore >= needed && h.chunks <= WakeWords.MAX_WAKE_CHUNKS) { wake(); return }
-        }
-        // With audio playing on the phone, its sound runs into what you say, so "Ajax" rarely
-        // arrives on its own: then it counts inside a longer phrase too, if heard clearly.
-        val playingNow = getSystemService(android.media.AudioManager::class.java)?.isMusicActive == true
-        if (playingNow && WakeWords.containsWake(h.text) && h.confidence >= WakeWords.MIN_CONFIDENCE_IN_AUDIO) { wake(); return }
-        // Speech from the phone's own speaker (a video saying "flashlight") must be very clear to count.
-        val kind = WakeWords.match(h.text) ?: return
-        if (kind == WakeWords.Kind.WAKE && usingDetector && !DETECTOR_WATCH_ONLY) return // the detector already said no
         val playing = getSystemService(android.media.AudioManager::class.java)?.isMusicActive == true
-        if (h.confidence < WakeWords.minConfidence(kind, playing)) return
+        val prefs = getSharedPreferences(Prefs.NAME, MODE_PRIVATE)
+        // The keyword recogniser and the word's trained detector must agree (see WakeWords.decide).
+        val kind = WakeWords.decide(
+            h.text, h.confidence, playing, h.scores,
+            quietTorch = prefs.getBoolean(Prefs.QUIET_TORCH, false),
+            quietWake = prefs.getBoolean(Prefs.QUIET_WAKE, false),
+            agree = WakeWords.agreement(prefs.getInt(Prefs.AGREEMENT, WakeWords.DEFAULT_AGREEMENT)),
+        )
+        // Voice lock: keywords count only in your voice (a video or song saying them does nothing).
+        val allowed = kind == null || VoiceLock.accepts(this, h)
+        logScore(h, threshold, playing, if (kind == null) "-" else if (allowed) kind.name else "not your voice")
+        if (!allowed) return
         when (kind) {
             WakeWords.Kind.TORCH_ON -> Actions.torch(this, true)
             WakeWords.Kind.TORCH_OFF -> Actions.torch(this, false)
             WakeWords.Kind.WAKE -> wake()
+            null -> {}
         }
     }
 
     /**
      * One line per phrase: time, what the keyword recogniser wrote (a keyword or [unk], never other
-     * words), its confidence, the detector's score and the phrase length. No audio. Kept in Ajax's
-     * private storage, last 2,000 lines, so the detector can be judged on real use.
+     * words), its confidence, the "Ajax" detector's score, the phrase length, that detector's own
+     * threshold, how much the voice sounds like yours, whether the phone was playing audio, the
+     * lumos and flashlight detectors' scores (-1 without one), and what Ajax did. No audio. Kept in
+     * Ajax's private storage, last 2,000 lines, so false triggers can be traced afterwards.
      */
-    private fun logScore(h: Spotter.Heard, threshold: Float) {
-        if (!usingDetector) return
+    private fun logScore(h: Spotter.Heard, threshold: Float, playing: Boolean, did: String) {
         try {
             val f = java.io.File(filesDir, "wake-scores.tsv")
             val time = java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())
-            f.appendText("$time\t${h.text}\t${"%.2f".format(h.confidence)}\t${"%.3f".format(h.wakeScore)}\t${h.chunks}\t$threshold\t${VoiceLock.similarity(this, h.voice)?.let { "%.2f".format(it) } ?: "-"}\t${h.voiceFrames}\n")
+            val score = { w: WakeWords.Word -> "%.3f".format(h.scores?.get(w.ordinal) ?: -1f) }
+            f.appendText(
+                "$time\t${h.text}\t${"%.2f".format(h.confidence)}\t${"%.3f".format(h.wakeScore)}\t${h.chunks}\t$threshold" +
+                    "\t${VoiceLock.similarity(this, h.voice)?.let { "%.2f".format(it) } ?: "-"}\t${h.voiceFrames}" +
+                    "\t${if (playing) "playing" else "quiet"}\t${score(WakeWords.Word.LUMOS)}\t${score(WakeWords.Word.FLASHLIGHT)}\t$did\n",
+            )
             if (f.length() > 200_000) f.writeText(f.readLines().takeLast(2_000).joinToString("\n", postfix = "\n"))
         } catch (e: java.io.IOException) {}
     }

@@ -55,7 +55,13 @@ class Spotter(model: Model, phrases: Collection<String>, speakers: SpeakerModel?
         var wakeScore: Float = 0f,
         val voice: FloatArray? = null,
         val voiceFrames: Int = 0,
-    )
+    ) {
+        /**
+         * The trained detectors' highest scores during the utterance, one per [WakeWords.Word]
+         * (below zero for a word without a detector); null when no detector ran.
+         */
+        var scores: FloatArray? = null
+    }
 
     private val rec = Recognizer(model, RATE.toFloat(), JSONArray(phrases.toList() + "[unk]").toString())
         .apply {

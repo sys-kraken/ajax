@@ -43,6 +43,12 @@ object Ui {
         if (bold) typeface = MEDIUM
     }
 
+    /** The small label above a group of rows. */
+    fun header(ctx: Context, title: String) = text(ctx, 13f, MUTED, bold = true).apply {
+        text = title
+        setPadding(ctx.dp(20), ctx.dp(12), ctx.dp(20), ctx.dp(8))
+    }
+
     /** A rounded group of rows. Add rows with [addRow] so they get dividers. */
     fun group(ctx: Context) = LinearLayout(ctx).apply {
         orientation = LinearLayout.VERTICAL

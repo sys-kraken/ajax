@@ -18,6 +18,8 @@ import java.nio.ByteOrder
  * "Teach Ajax your voice": records you saying "Ajax" [TAKES] times, 2 seconds each after a beep,
  * into Ajax's private storage (files/voice). These train a version of the detector that knows your
  * voice; they never leave the phone except when you connect it to your PC for that training.
+ * "lumos" and "flashlight" are recorded the same way into their own folders (files/voice-lumos,
+ * files/voice-flashlight), for the detectors of those words; only the "Ajax" ones make the voice print.
  */
 object VoiceSamples {
     const val TAKES = 25
@@ -27,30 +29,33 @@ object VoiceSamples {
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var running = false
 
-    fun dir(ctx: Context) = File(ctx.filesDir, "voice")
-    fun count(ctx: Context) = dir(ctx).listFiles { f -> f.name.endsWith(".wav") }?.size ?: 0
+    fun dir(ctx: Context, word: WakeWords.Word = WakeWords.Word.AJAX) =
+        File(ctx.filesDir, if (word == WakeWords.Word.AJAX) "voice" else "voice-${word.file}")
+
+    fun count(ctx: Context, word: WakeWords.Word = WakeWords.Word.AJAX) =
+        dir(ctx, word).listFiles { f -> f.name.endsWith(".wav") }?.size ?: 0
 
     fun clear(ctx: Context) { dir(ctx).deleteRecursively() }
 
     /** [progress] gets "Say Ajax (3 of 25)" and similar on the main thread; [done] runs at the end. */
-    fun record(ctx: Context, progress: (String) -> Unit, done: () -> Unit) {
+    fun record(ctx: Context, word: WakeWords.Word = WakeWords.Word.AJAX, progress: (String) -> Unit, done: () -> Unit) {
         if (running) return
         running = true
         val app = ctx.applicationContext
         MicGuard.hold(this, maxMs = 5 * 60_000)
         Thread {
-            val out = dir(app).apply { mkdirs() }
-            val start = count(app)
+            val out = dir(app, word).apply { mkdirs() }
+            val start = count(app, word)
             val beep = try { ToneGenerator(AudioManager.STREAM_MUSIC, 60) } catch (e: RuntimeException) { null }
             try {
                 Thread.sleep(1_000) // let the wake word listener let go of the microphone
                 for (i in 1..TAKES) {
-                    main.post { progress("Say “Ajax” after the beep ($i of $TAKES)") }
+                    main.post { progress("Say “${word.say}” after the beep ($i of $TAKES)") }
                     Thread.sleep(700)
                     beep?.startTone(ToneGenerator.TONE_PROP_BEEP, 120)
                     Thread.sleep(150)
                     val pcm = capture() ?: break
-                    writeWav(File(out, "ajax_${start + i}.wav"), pcm)
+                    writeWav(File(out, "${word.file}_${start + i}.wav"), pcm)
                     Thread.sleep(400)
                 }
             } catch (e: InterruptedException) {
