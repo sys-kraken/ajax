@@ -1,27 +1,37 @@
 package com.ajax.assistant
 
 /**
- * Runs the keyword recogniser and the trained detectors side by side over the same audio, one
- * microphone chunk at a time, and hands back each utterance with both opinions on it. The live
- * listener and the recorded-speech check both go through here, so they hear alike.
+ * Runs the keyword recogniser over the microphone audio and, only when it hears one of its keywords,
+ * asks the trained detectors about that moment; hands back each utterance with both opinions on it.
+ * The live listener and the recorded-speech check both go through here, so they hear alike.
  *
- * The detectors cost real CPU, so they run only while there is sound: when it starts they first
- * catch up on the last 2 s, then follow along until it stops. Audio thread only.
+ * The detectors are the expensive part (two neural networks every 80 ms), so they don't follow the
+ * sound as it happens. The last [RING_CHUNKS] of audio are kept instead, and when the recogniser
+ * writes a keyword, the detectors score the utterance (with 2 s before it) in one go, a short moment after the utterance
+ * ends (they answer a little after a word). Speech, music and noise that contain no keyword cost
+ * only the recogniser. Audio thread only.
  */
 class WakeListener(private val spotter: Spotter, private val detector: AjaxDetector?) {
     private companion object {
-        /** How long a keyword waits for its detector to agree: 600 ms of 50 ms chunks. */
+        /** Audio scored before the utterance starts: 2 s, the detectors' window. */
+        const val LEAD_CHUNKS = 40
+
+        /** Audio kept: the lead-in, the longest utterance (4 s) and the wait after it. */
+        const val RING_CHUNKS = LEAD_CHUNKS + 80 + 12
+
+        /** Audio after the utterance ends, before scoring it: 600 ms (the detectors answer late, later in music). */
         const val HOLD_CHUNKS = 12
     }
 
-    private val backlog = ArrayDeque<ByteArray>()     // the last 2 s of audio, for the detectors' context
-    private val peaks = FloatArray(WakeWords.Word.values().size)
-    private var detecting = false
+    private val ring = ArrayDeque<ByteArray>()
 
-    // The detectors answer a little after a word ends. Over music the recogniser often hands the
-    // word over first, so a keyword whose detector hasn't agreed yet is held back for a moment.
+    // A keyword waiting for the moment of audio after it, before the detectors score it.
     private var held: Spotter.Heard? = null
     private var heldFor = 0
+    private var heldLength = 0
+
+    // Chunks in the utterance being heard so far.
+    private var length = 0
     private val ready = ArrayDeque<Spotter.Heard>()
 
     /** Time the detectors have used, for measuring their cost. */
@@ -30,66 +40,70 @@ class WakeListener(private val spotter: Spotter, private val detector: AjaxDetec
 
     fun feed(buf: ByteArray, n: Int): Spotter.Heard? {
         val result = spotter.feed(buf, n)
-        if (detector != null && !detector.anyActive) {
-            // Every detector is switched off for now (keywords ignored while audio plays).
-            detecting = false
-        } else if (detector != null) {
-            val t0 = System.nanoTime()
-            if (spotter.isSpeaking || result != null || held != null) {
-                if (!detecting) {
-                    detecting = true
-                    detector.reset()
-                    peaks.fill(0f)
-                    for (b in backlog) detector.feed(b, b.size)
-                }
-                detector.feed(buf, n)
-                for (k in peaks.indices) peaks[k] = maxOf(peaks[k], detector.scores[k])
-            } else {
-                // Sound that carries straight on into the next utterance (music) keeps the detectors
-                // going; only real quiet ends the run.
-                detecting = false
-            }
-            backlog.addLast(buf.copyOf(n))
-            if (backlog.size > 40) backlog.removeFirst()
-            detectorNanos += System.nanoTime() - t0
+        if (spotter.isSpeaking || result != null) length++ else length = 0
+        if (detector != null) {
+            ring.addLast(buf.copyOf(n))
+            if (ring.size > RING_CHUNKS) ring.removeFirst()
         }
-        if (result == null) {
-            held?.let { h ->
-                val s = h.scores
-                if (detector != null && s != null) for (k in s.indices) if (s[k] >= 0f) s[k] = maxOf(s[k], detector.scores[k])
-                heldFor++
-                if (heldFor >= HOLD_CHUNKS || !WakeWords.waitsForDetector(h.text, s)) release()
-            }
-        } else {
-            release() // something new was said: the held one is judged as it stands
-            if (detector != null) {
-                result.scores = FloatArray(peaks.size) { if (detector.scores[it] < 0f) -1f else peaks[it] }
-                peaks.fill(0f)
-            }
-            if (WakeWords.waitsForDetector(result.text, result.scores)) {
+        if (result != null) {
+            release() // something new was said: the held one is scored as it stands
+            if (detector != null && detector.anyActive && mayBeKeyword(result.text)) {
                 held = result
                 heldFor = 0
+                heldLength = length
             } else {
+                result.scores = unscored()
                 ready.addLast(result)
             }
+            length = 0
+        } else if (held != null && ++heldFor >= HOLD_CHUNKS) {
+            release()
         }
         return ready.removeFirstOrNull()?.also { h ->
             h.wakeScore = h.scores?.get(WakeWords.Word.AJAX.ordinal)?.coerceAtLeast(0f) ?: 0f
         }
     }
 
+    /** The recogniser wrote a keyword (alone or with other sound around it): worth asking the detectors. */
+    private fun mayBeKeyword(text: String): Boolean {
+        val core = WakeWords.normalize(text).split(" ").filter { it.isNotEmpty() && it != "unk" }.joinToString(" ")
+        return WakeWords.match(core) != null
+    }
+
     private fun release() {
-        held?.let { ready.addLast(it) }
+        val h = held ?: return
         held = null
+        h.scores = score(LEAD_CHUNKS + heldLength + heldFor)
+        ready.addLast(h)
+    }
+
+    /** Scores the last [chunks] of audio from a fresh start and returns each word's highest score in it. */
+    private fun score(chunks: Int): FloatArray? {
+        val d = detector ?: return unscored()
+        val t0 = System.nanoTime()
+        d.reset()
+        val peaks = unscored() ?: return null
+        for (i in maxOf(0, ring.size - chunks) until ring.size) {
+            val b = ring[i]
+            d.feed(b, b.size)
+            for (k in peaks.indices) if (d.scores[k] >= 0f) peaks[k] = maxOf(peaks[k], d.scores[k])
+        }
+        detectorNanos += System.nanoTime() - t0
+        return peaks
+    }
+
+    /** No detector was asked (not a keyword): 0 for each word that has one, below zero otherwise. */
+    private fun unscored(): FloatArray? {
+        val d = detector ?: return null
+        return FloatArray(d.scores.size) { if (d.has(WakeWords.Word.values()[it])) 0f else -1f }
     }
 
     fun reset() {
         spotter.reset()
         detector?.reset()
-        peaks.fill(0f)
-        backlog.clear()
-        detecting = false
+        ring.clear()
         held = null
+        length = 0
         ready.clear()
     }
 }

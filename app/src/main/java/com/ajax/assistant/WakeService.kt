@@ -45,7 +45,7 @@ class WakeService : Service() {
             "com.google.android.apps.recorder", "com.google.android.GoogleCamera", "com.android.camera",
             "com.android.soundrecorder",
         )
-        private const val FRONT_CHECK_MS = 1_000L
+        private const val FRONT_CHECK_MS = 2_000L
 
         /** Wait after Ajax stops talking, so the end of its own voice isn't heard as a command. */
         private const val RESUME_AFTER_MS = 800L
@@ -433,7 +433,7 @@ class WakeService : Service() {
         // The communication source is the one phones run their call echo canceller on.
         val source = if (echoCancel) MediaRecorder.AudioSource.VOICE_COMMUNICATION else MediaRecorder.AudioSource.VOICE_RECOGNITION
         val r = try {
-            AudioRecord(source, RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, RATE * 2))
+            AudioRecord(source, RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, RATE * 4))
         } catch (e: Exception) { return null }
         if (r.state != AudioRecord.STATE_INITIALIZED) { r.release(); return null }
         if (echoCancel) {
